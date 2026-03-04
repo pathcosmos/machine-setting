@@ -46,7 +46,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-node         Skip Node.js"
             echo "  --java            Install SDKMAN + Java"
             echo "  --no-java         Skip Java"
-            echo "  --profile <name>  Use profile (gpu-workstation, cpu-server, laptop, minimal)"
+            echo "  --profile <name>  Use profile (gpu-workstation, cpu-server, mac-apple-silicon, laptop, minimal)"
             echo "  --help            Show this help"
             exit 0 ;;
         *)  echo "Unknown option: $1"; exit 1 ;;
@@ -71,6 +71,17 @@ echo "╔═══════════════════════�
 echo "║     Machine Setting Bootstrap        ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
+
+# --- macOS prerequisites check ---
+if [ "$(uname -s)" = "Darwin" ]; then
+    # Ensure Xcode Command Line Tools are installed
+    if ! xcode-select -p &>/dev/null; then
+        echo "[Pre] Installing Xcode Command Line Tools..."
+        xcode-select --install 2>/dev/null || true
+        echo "  Please complete the Xcode CLT installation and re-run setup.sh"
+        exit 1
+    fi
+fi
 
 # ============================================================
 # [1/6] Hardware Detection
@@ -129,7 +140,8 @@ case "$VENV_MODE" in
 esac
 
 GPU_LABEL="CPU mode"
-[ "$HAS_GPU" = true ] && GPU_LABEL="GPU mode"
+[ "${GPU_BACKEND:-none}" = "cuda" ] && GPU_LABEL="GPU mode (CUDA)"
+[ "${GPU_BACKEND:-none}" = "mps" ] && GPU_LABEL="GPU mode (MPS/Apple Silicon)"
 
 echo "  → Creating venv ($GPU_LABEL)..."
 bash "$SCRIPT_DIR/scripts/setup-venv.sh" $VENV_ARGS --python "$PYTHON_VERSION"
@@ -191,7 +203,7 @@ echo ""
 # [6/6] Shell Integration
 # ============================================================
 echo "[6/6] Shell Integration"
-echo "  → Configuring bashrc.d modules..."
+echo "  → Configuring shell modules (bash + zsh)..."
 bash "$SCRIPT_DIR/shell/install-shell.sh"
 
 # Configure git hooks
@@ -202,6 +214,11 @@ echo "╔═══════════════════════�
 echo "║          Setup Complete!             ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
-echo "  Run 'source ~/.bashrc' or open a new terminal."
+CURRENT_SHELL="$(basename "${SHELL:-/bin/bash}")"
+case "$CURRENT_SHELL" in
+    zsh)  echo "  Run 'source ~/.zshrc' or open a new terminal." ;;
+    bash) echo "  Run 'source ~/.bashrc' or open a new terminal." ;;
+    *)    echo "  Open a new terminal to load shell modules." ;;
+esac
 echo "  Then use 'aienv' to activate the AI environment."
 echo ""

@@ -37,8 +37,10 @@ _ms_check_updates() {
     local INTERVAL=86400  # 24 hours
 
     # Load custom interval if set
-    [ -f "$REPO/config/default.conf" ] && \
-        INTERVAL=$(grep -oP 'UPDATE_CHECK_INTERVAL=\K[0-9]+' "$REPO/config/default.conf" 2>/dev/null || echo 86400)
+    if [ -f "$REPO/config/default.conf" ]; then
+        INTERVAL=$(sed -n 's/^UPDATE_CHECK_INTERVAL=\([0-9]*\).*/\1/p' "$REPO/config/default.conf" 2>/dev/null || echo 86400)
+        [ -z "$INTERVAL" ] && INTERVAL=86400
+    fi
 
     # Skip if checked recently
     if [ -f "$STAMP" ]; then

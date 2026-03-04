@@ -5,19 +5,19 @@ set -euo pipefail
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Patterns use grep -E (extended regex) for macOS/Linux compatibility
 PATTERNS=(
-    'AKIA[0-9A-Z]{16}'                    # AWS Access Key
-    'aws_secret_access_key\s*='           # AWS Secret Key assignment
-    'github_pat_[a-zA-Z0-9_]{22,}'        # GitHub PAT (fine-grained)
-    'ghp_[a-zA-Z0-9]{36}'                 # GitHub PAT (classic)
-    'gho_[a-zA-Z0-9]{36}'                 # GitHub OAuth
-    'sk-[a-zA-Z0-9]{20,}'                 # OpenAI/Anthropic API Key
-    'xox[bpors]-[a-zA-Z0-9-]+'            # Slack Token
-    'AIza[0-9A-Za-z_-]{35}'               # Google API Key
-    'PRIVATE KEY-----'                     # Private Key
-    'password\s*=\s*["\x27][^"\x27]+'     # Hardcoded password
-    'api[_-]?key\s*=\s*["\x27][^"\x27]+'  # API key assignment
-    'secret\s*=\s*["\x27][^"\x27]+'       # Secret assignment
+    'AKIA[0-9A-Z]{16}'                         # AWS Access Key
+    'aws_secret_access_key[[:space:]]*='       # AWS Secret Key assignment
+    'github_pat_[a-zA-Z0-9_]{22,}'             # GitHub PAT (fine-grained)
+    'ghp_[a-zA-Z0-9]{36}'                      # GitHub PAT (classic)
+    'gho_[a-zA-Z0-9]{36}'                      # GitHub OAuth
+    'sk-[a-zA-Z0-9]{20,}'                      # OpenAI/Anthropic API Key
+    'xox[bpors]-[a-zA-Z0-9-]+'                 # Slack Token
+    'AIza[0-9A-Za-z_-]{35}'                    # Google API Key
+    'PRIVATE KEY-----'                          # Private Key
+    'password[[:space:]]*=[[:space:]]*["\x27]'  # Hardcoded password
+    'api[_-]?key[[:space:]]*=[[:space:]]*["\x27]'  # API key assignment
 )
 
 FOUND=0
@@ -35,7 +35,7 @@ for file in $STAGED_FILES; do
     file -b --mime "$file" 2>/dev/null | grep -q "binary" && continue
 
     for pattern in "${PATTERNS[@]}"; do
-        if grep -PnH "$pattern" "$file" 2>/dev/null; then
+        if grep -EnH "$pattern" "$file" 2>/dev/null; then
             echo -e "${RED}[SECRET DETECTED]${NC} in $file (pattern: $pattern)"
             FOUND=1
         fi

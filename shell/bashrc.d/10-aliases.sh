@@ -17,5 +17,10 @@ alias mss='make -C ~/machine_setting status'
 alias msu='make -C ~/machine_setting update'
 alias msp='make -C ~/machine_setting push'
 
-# GPU monitoring
-alias gpustat='nvidia-smi --query-gpu=gpu_name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu --format=csv,noheader 2>/dev/null || echo "No GPU"'
+# GPU monitoring (cross-platform)
+if [ "$(uname -s)" = "Darwin" ]; then
+    # macOS: use powermetrics for Apple Silicon GPU (requires sudo)
+    alias gpustat='echo "Apple Silicon GPU"; ioreg -l | grep -i "gpu-core" 2>/dev/null || echo "Use: sudo powermetrics --samplers gpu_power -i 1000 -n 1"'
+else
+    alias gpustat='nvidia-smi --query-gpu=gpu_name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu --format=csv,noheader 2>/dev/null || echo "No GPU"'
+fi

@@ -1,0 +1,11 @@
+# Apple Silicon GPU packages (Metal Performance Shaders)
+# Standard PyTorch wheels include MPS support on macOS arm64
+# No special index URL needed — default PyPI wheels work
+
+# PyTorch ecosystem (standard builds include MPS)
+torch
+torchaudio
+torchvision
+
+# CPU ML runtime (onnxruntime-gpu not available on macOS)
+onnxruntime

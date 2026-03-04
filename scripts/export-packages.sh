@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Export current venv packages → categorized requirements files
+# Cross-platform: uses grep -E (not -P) for macOS compatibility
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +22,7 @@ echo "Exporting packages from: $VENV_PATH"
 # Get current freeze
 FREEZE=$("$VENV_PATH/bin/uv" pip freeze 2>/dev/null || "$PIP" freeze)
 
-# === Category patterns ===
+# === Category patterns (grep -E compatible) ===
 # GPU packages (nvidia-*, cuda-*, torch+cu*, triton, bitsandbytes)
 GPU_PATTERNS='nvidia-|cuda-|torch==.*\+cu|torchaudio==.*\+cu|torchvision==.*\+cu|triton==|bitsandbytes==|onnxruntime-gpu=='
 
@@ -34,22 +35,16 @@ WEB_PATTERNS='fastapi==|starlette==|uvicorn==|uvloop==|Flask==|Werkzeug==|gradio
 # System packages to exclude (Ubuntu system packages, not pip-installed)
 EXCLUDE_PATTERNS='bcc==|cloud-init==|command-not-found==|configobj==|dbus-python==|distro-info==|gpg==|launchpadlib==|lazr\.|netifaces==|PyGObject==|PyHamcrest==|python-apt==|python-debian==|screen-resolution-extra==|service-identity==|sos==|ssh-import-id==|systemd-python==|Twisted==|ubuntu-|ufw==|unattended-upgrades==|xkit==|Automat==|constantly==|hyperlink==|incremental==|zope\.|Babel==|blinker==|netaddr=='
 
-# Filter function
-categorize() {
-    local pattern="$1"
-    echo "$FREEZE" | grep -P "$pattern" || true
-}
-
 # Exclude system packages from freeze
-CLEAN_FREEZE=$(echo "$FREEZE" | grep -Pv "$EXCLUDE_PATTERNS" || true)
+CLEAN_FREEZE=$(echo "$FREEZE" | grep -Ev "$EXCLUDE_PATTERNS" || true)
 
 # Extract categories
-GPU_PKGS=$(echo "$CLEAN_FREEZE" | grep -P "$GPU_PATTERNS" || true)
-DATA_PKGS=$(echo "$CLEAN_FREEZE" | grep -P "$DATA_PATTERNS" || true)
-WEB_PKGS=$(echo "$CLEAN_FREEZE" | grep -P "$WEB_PATTERNS" || true)
+GPU_PKGS=$(echo "$CLEAN_FREEZE" | grep -E "$GPU_PATTERNS" || true)
+DATA_PKGS=$(echo "$CLEAN_FREEZE" | grep -E "$DATA_PATTERNS" || true)
+WEB_PKGS=$(echo "$CLEAN_FREEZE" | grep -E "$WEB_PATTERNS" || true)
 
 # Core = everything else (minus GPU, data, web)
-CORE_PKGS=$(echo "$CLEAN_FREEZE" | grep -Pv "$GPU_PATTERNS" | grep -Pv "$DATA_PATTERNS" | grep -Pv "$WEB_PATTERNS" || true)
+CORE_PKGS=$(echo "$CLEAN_FREEZE" | grep -Ev "$GPU_PATTERNS" | grep -Ev "$DATA_PATTERNS" | grep -Ev "$WEB_PATTERNS" || true)
 
 # Write files with headers
 write_req() {
@@ -67,14 +62,15 @@ write_req "$PKG_DIR/requirements-data.txt" "Data processing, databases, and file
 write_req "$PKG_DIR/requirements-web.txt" "Web frameworks, API, and HTTP packages" "$WEB_PKGS"
 write_req "$PKG_DIR/requirements-core.txt" "Core AI/ML packages (platform-independent)" "$CORE_PKGS"
 
-# CPU file is manually maintained (not auto-exported)
+# CPU and MPS files are manually maintained (not auto-exported)
 echo ""
 echo "Exported packages:"
 echo "  core: $(echo "$CORE_PKGS" | grep -c '==' || echo 0) packages"
 echo "  gpu:  $(echo "$GPU_PKGS" | grep -c '==' || echo 0) packages"
 echo "  data: $(echo "$DATA_PKGS" | grep -c '==' || echo 0) packages"
 echo "  web:  $(echo "$WEB_PKGS" | grep -c '==' || echo 0) packages"
-echo "  cpu:  (manually maintained)"
+echo "  cpu/mps: (manually maintained)"
 echo ""
 echo "Total: $(echo "$CLEAN_FREEZE" | grep -c '==' || echo 0) packages"
-echo "Excluded system packages: $(echo "$FREEZE" | grep -Pc "$EXCLUDE_PATTERNS" || echo 0)"
+EXCLUDED_COUNT=$(echo "$FREEZE" | grep -Ec "$EXCLUDE_PATTERNS" || echo 0)
+echo "Excluded system packages: $EXCLUDED_COUNT"

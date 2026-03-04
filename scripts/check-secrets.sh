@@ -11,9 +11,10 @@ echo "=== Secret Scanner ==="
 echo "Scanning: $TARGET"
 echo ""
 
+# Patterns use grep -E (extended regex) for cross-platform compatibility
 PATTERNS=(
     'AKIA[0-9A-Z]{16}'
-    'aws_secret_access_key\s*='
+    'aws_secret_access_key[[:space:]]*='
     'github_pat_[a-zA-Z0-9_]{22,}'
     'ghp_[a-zA-Z0-9]{36}'
     'sk-[a-zA-Z0-9]{20,}'
@@ -25,7 +26,7 @@ PATTERNS=(
 FOUND=0
 
 for pattern in "${PATTERNS[@]}"; do
-    MATCHES=$(grep -rPn "$pattern" "$TARGET" \
+    MATCHES=$(grep -rEn "$pattern" "$TARGET" \
         --include='*.sh' --include='*.conf' --include='*.env' \
         --include='*.py' --include='*.yml' --include='*.yaml' \
         --include='*.json' --include='*.toml' --include='*.txt' \
