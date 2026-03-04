@@ -1,0 +1,10 @@
+# CPU-only alternatives for machines without GPU
+# Install with: uv pip install -r requirements-cpu.txt --index-url https://download.pytorch.org/whl/cpu
+
+# PyTorch ecosystem (CPU builds)
+torch
+torchaudio
+torchvision
+
+# CPU ML runtime
+onnxruntime==1.24.2

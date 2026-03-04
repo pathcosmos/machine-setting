@@ -1,0 +1,47 @@
+# === Secrets & Environment ===
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+*.key
+*.pem
+*.p12
+
+# === Machine-specific ===
+config/machine.conf
+.machine_setting_profile
+.last-update-check
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# === Virtual Environments ===
+ai-env/
+.venv/
+venv/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === Logs ===
+*.log
+logs/
+
+# === Claude Code (keep .claude/settings.json only) ===
+.claude/*
+!.claude/settings.json

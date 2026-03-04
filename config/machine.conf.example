@@ -1,0 +1,17 @@
+# Machine-specific configuration override
+# Copy to config/machine.conf and customize
+# This file is gitignored
+
+# Override defaults
+# PYTHON_VERSION="3.13"
+# VENV_DEFAULT_PATH="$HOME/.venv"
+# INSTALL_NODE=false
+# INSTALL_JAVA=false
+# NODE_VERSION="22"
+# JAVA_VERSION="17"
+
+# Additional pip install arguments
+# PIP_EXTRA_ARGS="--proxy http://proxy:8080"
+
+# Custom package groups
+# PACKAGE_GROUPS="core data"

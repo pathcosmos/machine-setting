@@ -1,0 +1,11 @@
+# Machine-specific secrets and settings
+# Copy to ~/.bashrc.local and fill in values
+# This file should NEVER be committed
+
+# export OPENAI_API_KEY="sk-..."
+# export ANTHROPIC_API_KEY="sk-ant-..."
+# export HUGGINGFACE_TOKEN="hf_..."
+# export WANDB_API_KEY="..."
+# export AWS_ACCESS_KEY_ID="..."
+# export AWS_SECRET_ACCESS_KEY="..."
+# export DATABASE_URL="postgresql://..."
