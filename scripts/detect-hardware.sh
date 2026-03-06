@@ -59,6 +59,23 @@ if [ "$GPU_BACKEND" = "cuda" ]; then
 
     if [ -n "$CUDA_VERSION" ]; then
         CUDA_SUFFIX="cu$(echo "$CUDA_VERSION" | tr -d '.')"
+
+        # Fallback: if detected suffix not in gpu-index-urls.conf, use nearest lower version
+        SCRIPT_DIR_HW="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        REPO_DIR_HW="$(dirname "$SCRIPT_DIR_HW")"
+        GPU_URLS_CONF="$REPO_DIR_HW/config/gpu-index-urls.conf"
+        if [ -f "$GPU_URLS_CONF" ] && ! grep -q "^${CUDA_SUFFIX}=" "$GPU_URLS_CONF"; then
+            ORIGINAL_SUFFIX="$CUDA_SUFFIX"
+            for fallback in $(grep -oP '^cu\d+' "$GPU_URLS_CONF" | sort -rV); do
+                if [[ "$fallback" < "$CUDA_SUFFIX" ]] || [[ "$fallback" == "$CUDA_SUFFIX" ]]; then
+                    CUDA_SUFFIX="$fallback"
+                    break
+                fi
+            done
+            if [ "$ORIGINAL_SUFFIX" != "$CUDA_SUFFIX" ]; then
+                echo "  Note: ${ORIGINAL_SUFFIX} not in index, falling back to ${CUDA_SUFFIX}"
+            fi
+        fi
     fi
 fi
 

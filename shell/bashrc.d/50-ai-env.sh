@@ -1,16 +1,24 @@
 # AI Environment activation + background update check
 
+# Resolve repo directory from this script's location
+_MS_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 # Main activation function
 aienv() {
     local VENV_PATH="${1:-$HOME/ai-env}"
 
     if [ ! -d "$VENV_PATH" ]; then
         echo "Error: No venv at $VENV_PATH"
-        echo "Run: ~/machine_setting/scripts/setup-venv.sh"
+        echo "Run: $_MS_REPO_DIR/scripts/setup-venv.sh"
         return 1
     fi
 
     source "$VENV_PATH/bin/activate"
+
+    # Enable TF32 for Ampere+ GPUs (A100, H100, B200, etc.)
+    # TF32 provides ~2x throughput for FP32 matmul with minimal precision loss
+    export NVIDIA_TF32_OVERRIDE=1
+
     echo "AI env activated: $VENV_PATH ($(python --version))"
 
     # Background update check
@@ -30,7 +38,7 @@ aienv-off() {
 
 # Background update check (runs silently)
 _ms_check_updates() {
-    local REPO="$HOME/machine_setting"
+    local REPO="$_MS_REPO_DIR"
     [ -d "$REPO/.git" ] || return
 
     local STAMP="$REPO/.last-update-check"
@@ -56,7 +64,7 @@ _ms_check_updates() {
     local REMOTE=$(git -C "$REPO" rev-parse origin/main 2>/dev/null)
 
     if [ -n "$LOCAL" ] && [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
-        echo -e "\n\033[33m[machine_setting]\033[0m Updates available. Run: make -C ~/machine_setting update"
+        echo -e "\n\033[33m[machine_setting]\033[0m Updates available. Run: make -C $_MS_REPO_DIR update"
     fi
 
     date +%s > "$STAMP" 2>/dev/null || true

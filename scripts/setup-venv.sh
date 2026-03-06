@@ -46,11 +46,17 @@ echo "  Hardware: GPU=$HAS_GPU Backend=${GPU_BACKEND:-none} Suffix=$CUDA_SUFFIX"
 # --- Create venv ---
 if [ -d "$VENV_PATH" ]; then
     echo ""
-    read -rp "  Venv already exists at $VENV_PATH. Recreate? [y/N]: " RECREATE
-    if [[ "$RECREATE" =~ ^[Yy]$ ]]; then
-        rm -rf "$VENV_PATH"
+    if [ -t 0 ]; then
+        # Interactive: ask user
+        read -rp "  Venv already exists at $VENV_PATH. Recreate? [y/N]: " RECREATE
+        if [[ "$RECREATE" =~ ^[Yy]$ ]]; then
+            rm -rf "$VENV_PATH"
+        else
+            echo "  Keeping existing venv. Installing missing packages only."
+        fi
     else
-        echo "  Keeping existing venv. Installing missing packages only."
+        # Non-interactive: keep existing
+        echo "  Venv exists at $VENV_PATH. Keeping (non-interactive mode)."
     fi
 fi
 
@@ -69,6 +75,13 @@ for group in $PACKAGE_GROUPS; do
     if [ -f "$REQ_FILE" ]; then
         echo ""
         echo "  Installing $group packages..."
+
+        # cx-Oracle requires setuptools at build time (uv build isolation issue)
+        if grep -q "cx-Oracle" "$REQ_FILE" 2>/dev/null; then
+            $UV_PIP install $INSTALL_ARGS setuptools 2>&1 | tail -1
+            $UV_PIP install $INSTALL_ARGS cx-Oracle --no-build-isolation 2>&1 | tail -1
+        fi
+
         $UV_PIP install $INSTALL_ARGS -r "$REQ_FILE" 2>&1 | tail -1
     else
         echo "  Warning: $REQ_FILE not found, skipping"
@@ -92,7 +105,9 @@ if [ "$GPU_BACKEND" = "cuda" ] && [ -f "$PKG_DIR/requirements-gpu.txt" ]; then
 
     if [ -n "$INDEX_URL" ]; then
         echo "  Installing GPU packages (CUDA $CUDA_VERSION, index: $INDEX_URL)..."
-        $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-gpu.txt" --index-url "$INDEX_URL" 2>&1 | tail -1
+        $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-gpu.txt" \
+            --index-url "$INDEX_URL" \
+            --extra-index-url "https://pypi.org/simple" 2>&1 | tail -1
     else
         echo "  Warning: No index URL found for $CUDA_SUFFIX, skipping GPU packages"
     fi
@@ -110,7 +125,7 @@ fi
 
 # --- Verify ---
 echo ""
-TOTAL=$("$VENV_PATH/bin/pip" list 2>/dev/null | tail -n +3 | wc -l)
+TOTAL=$(uv pip list --python "$VENV_PATH/bin/python" 2>/dev/null | tail -n +3 | wc -l)
 echo "  Installed: $TOTAL packages"
 
 # Quick sanity checks

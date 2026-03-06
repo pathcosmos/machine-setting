@@ -45,7 +45,7 @@ install_shell_block() {
     # Build the sourcing block
     local BLOCK="$MARKER
 # Auto-source shell modules from machine_setting
-for f in $HOME/machine_setting/shell/bashrc.d/[0-9]*.sh; do
+for f in $REPO_DIR/shell/bashrc.d/[0-9]*.sh; do
     [ -r \"\$f\" ] && source \"\$f\"
 done
 # Source machine-local secrets (never committed)

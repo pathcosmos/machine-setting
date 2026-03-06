@@ -9,6 +9,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# --- Validate HOME ---
+if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then
+    echo "Warning: HOME is not set or invalid ('${HOME:-}')"
+    HOME=$(getent passwd "$(whoami)" 2>/dev/null | cut -d: -f6 || echo "/home/$(whoami)")
+    export HOME
+    echo "  HOME resolved to: $HOME"
+fi
+
 # --- Load defaults ---
 source "$SCRIPT_DIR/config/default.conf"
 [ -f "$SCRIPT_DIR/config/machine.conf" ] && source "$SCRIPT_DIR/config/machine.conf"
@@ -134,10 +142,24 @@ if [ -z "$VENV_MODE" ]; then
 fi
 
 case "$VENV_MODE" in
-    global) VENV_ARGS="--global" ;;
-    local)  VENV_ARGS="--local" ;;
-    custom) VENV_ARGS="--path $VENV_CUSTOM_PATH" ;;
+    global) VENV_ARGS="--global"; VENV_CHECK_PATH="$HOME/ai-env" ;;
+    local)  VENV_ARGS="--local"; VENV_CHECK_PATH="./.venv" ;;
+    custom) VENV_ARGS="--path $VENV_CUSTOM_PATH"; VENV_CHECK_PATH="$VENV_CUSTOM_PATH" ;;
 esac
+
+# --- Disk space check ---
+REQUIRED_GB=15
+VENV_CHECK_DIR="$(dirname "$VENV_CHECK_PATH")"
+[ -d "$VENV_CHECK_DIR" ] || VENV_CHECK_DIR="$HOME"
+AVAILABLE_GB=$(df -BG "$VENV_CHECK_DIR" 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G' || echo 0)
+if [ "$AVAILABLE_GB" -lt "$REQUIRED_GB" ] 2>/dev/null; then
+    echo "  Warning: Only ${AVAILABLE_GB}GB available at $VENV_CHECK_DIR (${REQUIRED_GB}GB recommended)"
+    echo "  Consider using --venv <path> with a larger partition"
+    if [ "$INTERACTIVE" = true ]; then
+        read -rp "  Continue anyway? [y/N]: " CONT
+        [[ "${CONT:-N}" =~ ^[Yy]$ ]] || exit 1
+    fi
+fi
 
 GPU_LABEL="CPU mode"
 [ "${GPU_BACKEND:-none}" = "cuda" ] && GPU_LABEL="GPU mode (CUDA)"
