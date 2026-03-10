@@ -22,6 +22,7 @@ aienv
 aienv                  # Activate venv + background update check
 aienv-off              # Deactivate
 
+make check             # Verify environment (GPU, packages)
 make push              # Export packages + commit + push to remote
 make update            # Pull changes + notify if packages changed
 make status            # Show sync status
@@ -45,6 +46,7 @@ make export            # Export current venv to requirements files
 
 | Profile | Platform | GPU Backend | Node | Java | Packages |
 |---------|----------|-------------|------|------|----------|
+| ngc-container | NGC/Linux | CUDA (NV symlink) | No | No | core+data+web+nv-link |
 | gpu-workstation | Linux | CUDA | Yes | Yes | core+data+web+gpu |
 | mac-apple-silicon | macOS | MPS | Yes | No | core+data+web+mps |
 | cpu-server | Linux | None | Yes | Yes | core+data+web+cpu |
@@ -55,9 +57,23 @@ make export            # Export current venv to requirements files
 
 | Platform | GPU | Backend | Auto-detected |
 |----------|-----|---------|---------------|
+| NGC container | NVIDIA | CUDA (NV custom build symlink) | torch version check |
 | Linux | NVIDIA | CUDA (cu130, cu126, etc.) | lspci + nvcc |
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
 | Any | None | CPU fallback | automatic |
+
+### NGC Container Mode
+
+NGC 컨테이너처럼 시스템에 NV 커스텀 빌드(torch, flash_attn, transformer_engine)가 이미 설치된 환경에서는 PyPI에서 다시 받지 않고 심볼릭 링크로 venv에 연결합니다:
+
+```bash
+# 자동 감지 (NGC 컨테이너면 자동 선택)
+./setup.sh
+
+# 수동 지정
+./setup.sh --profile ngc-container
+scripts/setup-venv.sh --nv-link
+```
 
 ## Structure
 
@@ -78,6 +94,10 @@ machine_setting/
 ├── profiles/             # Pre-configured machine profiles
 └── docs/                 # System documentation
 ```
+
+## Troubleshooting
+
+환경 구성 중 문제가 발생하면 [docs/troubleshooting.md](docs/troubleshooting.md)를 참고하세요.
 
 ## Security
 

@@ -166,7 +166,12 @@ GPU_LABEL="CPU mode"
 [ "${GPU_BACKEND:-none}" = "mps" ] && GPU_LABEL="GPU mode (MPS/Apple Silicon)"
 
 echo "  → Creating venv ($GPU_LABEL)..."
-bash "$SCRIPT_DIR/scripts/setup-venv.sh" $VENV_ARGS --python "$PYTHON_VERSION"
+VENV_EXTRA_ARGS=""
+if [ "${NV_LINK:-false}" = true ]; then
+    VENV_EXTRA_ARGS="--nv-link"
+    echo "  → NV custom build symlink mode enabled"
+fi
+bash "$SCRIPT_DIR/scripts/setup-venv.sh" $VENV_ARGS --python "$PYTHON_VERSION" $VENV_EXTRA_ARGS
 echo ""
 
 # ============================================================

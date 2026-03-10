@@ -108,9 +108,23 @@ case "$OS_TYPE" in
         ;;
 esac
 
+# --- NGC Container Detection ---
+IS_NGC_CONTAINER=false
+if [ "$GPU_BACKEND" = "cuda" ]; then
+    # NGC containers have NV custom torch in system site-packages
+    if python3 -c "import torch; assert 'nv' in torch.__version__ or '+cu' in torch.__version__" 2>/dev/null; then
+        IS_NGC_CONTAINER=true
+    # Also check common NGC markers
+    elif [ -f /etc/nvidia/entrypoint.d ] || [ -d /opt/nvidia ] || grep -q "NGC" /etc/os-release 2>/dev/null; then
+        IS_NGC_CONTAINER=true
+    fi
+fi
+
 # --- Profile Suggestion ---
 if [ "$GPU_BACKEND" = "mps" ]; then
     SUGGESTED_PROFILE="mac-apple-silicon"
+elif [ "$IS_NGC_CONTAINER" = true ]; then
+    SUGGESTED_PROFILE="ngc-container"
 elif [ "$GPU_BACKEND" = "cuda" ]; then
     SUGGESTED_PROFILE="gpu-workstation"
 elif [ "$OS_ID" = "macos" ]; then
@@ -131,6 +145,7 @@ echo "  GPU: ${HAS_GPU} (${GPU_COUNT}x ${GPU_NAME:-none})"
 echo "  Backend: ${GPU_BACKEND:-none}"
 [ "$GPU_BACKEND" = "cuda" ] && echo "  CUDA: ${CUDA_VERSION:-none} (${CUDA_SUFFIX})"
 [ "$GPU_BACKEND" = "mps" ] && echo "  MPS: available (Metal Performance Shaders)"
+[ "$IS_NGC_CONTAINER" = true ] && echo "  NGC: detected (NV custom builds available)"
 echo "  Profile: ${SUGGESTED_PROFILE}"
 
 # --- Write profile ---
@@ -150,6 +165,7 @@ GPU_COUNT=${GPU_COUNT}
 GPU_BACKEND="${GPU_BACKEND}"
 CUDA_VERSION="${CUDA_VERSION}"
 CUDA_SUFFIX="${CUDA_SUFFIX}"
+IS_NGC_CONTAINER=${IS_NGC_CONTAINER}
 SUGGESTED_PROFILE="${SUGGESTED_PROFILE}"
 EOF
 

@@ -33,6 +33,7 @@ hf-xet==1.3.2
 safetensors==0.7.0
 accelerate==1.12.0
 peft==0.18.1
+trl==0.18.1
 sentence-transformers==5.2.3
 sentencepiece==0.2.1
 

@@ -22,6 +22,9 @@ status: ## Show sync status
 export: ## Export current venv packages to requirements files
 	$(REPO_DIR)/scripts/export-packages.sh
 
+check: ## Verify AI environment (GPU, packages)
+	$(REPO_DIR)/scripts/check-env.sh
+
 venv: ## Create/update virtual environment
 	$(REPO_DIR)/scripts/setup-venv.sh
 

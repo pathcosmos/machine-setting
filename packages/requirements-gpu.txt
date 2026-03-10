@@ -16,5 +16,6 @@ cuda-bindings
 cuda-pathfinder
 
 # GPU-accelerated ML (from PyPI via --extra-index-url)
+flash-attn
 bitsandbytes
 onnxruntime-gpu
