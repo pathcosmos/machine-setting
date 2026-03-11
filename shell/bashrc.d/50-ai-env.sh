@@ -3,6 +3,9 @@
 # Resolve repo directory from this script's location
 _MS_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# Remove any conflicting alias before defining function
+unalias aienv 2>/dev/null || true
+
 # Main activation function
 aienv() {
     local VENV_PATH="${1:-$HOME/ai-env}"

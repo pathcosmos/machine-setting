@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help
+.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry reset plan preflight
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -6,6 +6,12 @@ REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+plan: ## Pre-flight check (show what would be installed/updated)
+	$(REPO_DIR)/scripts/preflight.sh --check-only
+
+preflight: ## Pre-flight check then selective install
+	$(REPO_DIR)/setup.sh --preflight
 
 setup: ## Run full bootstrap setup
 	$(REPO_DIR)/setup.sh
@@ -36,3 +42,21 @@ detect: ## Run hardware detection
 
 secrets: ## Scan for potential secrets
 	$(REPO_DIR)/scripts/check-secrets.sh $(REPO_DIR)
+
+doctor: ## Run health check
+	$(REPO_DIR)/scripts/doctor.sh
+
+recover: ## Auto-recover broken components
+	$(REPO_DIR)/scripts/doctor.sh --recover
+
+verify: ## Verify installed packages vs requirements
+	$(REPO_DIR)/scripts/doctor.sh --verify-packages
+
+uninstall: ## Interactive uninstall
+	$(REPO_DIR)/scripts/uninstall.sh
+
+uninstall-dry: ## Show what would be removed
+	$(REPO_DIR)/scripts/uninstall.sh --dry-run
+
+reset: ## Reset install state and start fresh
+	$(REPO_DIR)/setup.sh --reset

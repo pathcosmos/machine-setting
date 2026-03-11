@@ -95,6 +95,41 @@ machine_setting/
 └── docs/                 # System documentation
 ```
 
+## Maintenance & Recovery
+
+```bash
+# Health check — diagnose all components
+make doctor
+
+# Auto-recover broken components
+make recover
+
+# Verify installed packages vs requirements
+make verify
+
+# Resume failed installation (skip completed stages)
+./setup.sh --resume
+
+# Reset state and start fresh
+./setup.sh --reset
+make reset
+
+# Start from a specific stage (1-6)
+./setup.sh --from 3
+
+# Interactive uninstall (toggle components)
+make uninstall
+
+# Show what would be removed
+make uninstall-dry
+
+# Remove specific components
+./scripts/uninstall.sh --component venv,node
+
+# Remove everything (requires confirmation)
+./scripts/uninstall.sh --all
+```
+
 ## Troubleshooting
 
 환경 구성 중 문제가 발생하면 [docs/troubleshooting.md](docs/troubleshooting.md)를 참고하세요.

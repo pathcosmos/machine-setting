@@ -11,7 +11,10 @@ secrets/
 # === Machine-specific ===
 config/machine.conf
 .machine_setting_profile
+.machine_setting/
 .last-update-check
+env/.install_state
+env/.preflight_plan
 
 # === Python ===
 __pycache__/

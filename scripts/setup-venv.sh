@@ -6,6 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 PKG_DIR="$REPO_DIR/packages"
 
+# --- Load checkpoint library if available ---
+if [ -f "$SCRIPT_DIR/lib-checkpoint.sh" ]; then
+    source "$SCRIPT_DIR/lib-checkpoint.sh"
+    HAS_CHECKPOINT=true
+else
+    HAS_CHECKPOINT=false
+fi
+
 # --- Load config ---
 source "$REPO_DIR/config/default.conf"
 [ -f "$REPO_DIR/config/machine.conf" ] && source "$REPO_DIR/config/machine.conf"
@@ -74,6 +82,13 @@ INSTALL_ARGS="--python $VENV_PATH/bin/python"
 
 # --- Install package groups ---
 for group in $PACKAGE_GROUPS; do
+    # Skip groups already installed (checkpoint tracking)
+    if [ "$HAS_CHECKPOINT" = true ] && checkpoint_is_group_done "$group"; then
+        echo ""
+        echo "  $group packages... already done, skipping"
+        continue
+    fi
+
     REQ_FILE="$PKG_DIR/requirements-${group}.txt"
     if [ -f "$REQ_FILE" ]; then
         echo ""
@@ -86,6 +101,8 @@ for group in $PACKAGE_GROUPS; do
         fi
 
         $UV_PIP install $INSTALL_ARGS -r "$REQ_FILE" 2>&1 | tail -1
+        # Track completion
+        [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "$group"
     else
         echo "  Warning: $REQ_FILE not found, skipping"
     fi
@@ -95,10 +112,22 @@ done
 echo ""
 GPU_BACKEND="${GPU_BACKEND:-none}"
 
-if [ "$NV_LINK" = true ] && [ "$GPU_BACKEND" = "cuda" ]; then
+# Determine compute backend group name for tracking
+_COMPUTE_GROUP=""
+if [ "$GPU_BACKEND" = "cuda" ]; then
+    _COMPUTE_GROUP="gpu"
+elif [ "$GPU_BACKEND" = "mps" ]; then
+    _COMPUTE_GROUP="mps"
+else
+    _COMPUTE_GROUP="cpu"
+fi
+
+# Skip if already installed
+if [ "$HAS_CHECKPOINT" = true ] && checkpoint_is_group_done "$_COMPUTE_GROUP"; then
+    echo "  $_COMPUTE_GROUP packages... already done, skipping"
+elif [ "$NV_LINK" = true ] && [ "$GPU_BACKEND" = "cuda" ]; then
     # NGC container mode: skip PyPI GPU packages, will symlink NV builds later
     echo "  NV link mode: skipping PyPI GPU packages (will symlink system builds)"
-
 elif [ "$GPU_BACKEND" = "cuda" ] && [ -f "$PKG_DIR/requirements-gpu.txt" ]; then
     # Linux NVIDIA: install CUDA-specific wheels
     INDEX_URL=""
@@ -115,6 +144,7 @@ elif [ "$GPU_BACKEND" = "cuda" ] && [ -f "$PKG_DIR/requirements-gpu.txt" ]; then
         $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-gpu.txt" \
             --index-url "$INDEX_URL" \
             --extra-index-url "https://pypi.org/simple" 2>&1 | tail -1
+        [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "gpu"
     else
         echo "  Warning: No index URL found for $CUDA_SUFFIX, skipping GPU packages"
     fi
@@ -123,11 +153,13 @@ elif [ "$GPU_BACKEND" = "mps" ] && [ -f "$PKG_DIR/requirements-mps.txt" ]; then
     # macOS Apple Silicon: standard PyTorch includes MPS
     echo "  Installing MPS packages (Apple Silicon)..."
     $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-mps.txt" 2>&1 | tail -1
+    [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "mps"
 
 elif [ -f "$PKG_DIR/requirements-cpu.txt" ]; then
     # CPU-only fallback
     echo "  Installing CPU packages..."
     $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-cpu.txt" --index-url "https://download.pytorch.org/whl/cpu" 2>&1 | tail -1
+    [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "cpu"
 fi
 
 # --- NV Custom Build Symlinks (NGC container mode) ---

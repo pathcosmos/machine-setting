@@ -15,8 +15,10 @@ if [ ! -d "$SDKMAN_DIR" ]; then
     echo "  SDKMAN installed"
 fi
 
-# Load SDKMAN
+# Load SDKMAN (disable strict mode — SDKMAN scripts use unbound variables)
+set +u
 [ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && source "$SDKMAN_DIR/bin/sdkman-init.sh"
+set -u
 
 if ! command -v sdk &>/dev/null; then
     echo "Error: SDKMAN failed to load"
@@ -24,8 +26,10 @@ if ! command -v sdk &>/dev/null; then
 fi
 
 # Install Java (use Temurin distribution)
+# SDKMAN internals require relaxed variable checking
+set +u
 echo "Installing Java ${JAVA_VERSION} (Eclipse Temurin)..."
-JAVA_CANDIDATE=$(sdk list java 2>/dev/null | grep -oP "${JAVA_VERSION}\.[0-9.]+-tem" | head -1 || true)
+JAVA_CANDIDATE=$(sdk list java 2>/dev/null | grep -oE "${JAVA_VERSION}\.[0-9.]+-tem" | head -1 || true)
 
 if [ -n "$JAVA_CANDIDATE" ]; then
     sdk install java "$JAVA_CANDIDATE" || true
@@ -36,6 +40,7 @@ else
     sdk install java "${JAVA_VERSION}-open" 2>/dev/null || \
     echo "  Warning: Could not find Java ${JAVA_VERSION}. Run 'sdk list java' to see available versions."
 fi
+set -u
 
 # Verify
 if command -v java &>/dev/null; then
