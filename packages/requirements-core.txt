@@ -60,6 +60,9 @@ kiwisolver==1.4.9
 
 # === Experiment Tracking ===
 wandb==0.25.0
+mlflow
+tensorboard
+optuna
 
 # === Numerical/Scientific ===
 sympy==1.14.0

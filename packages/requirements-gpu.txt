@@ -19,3 +19,17 @@ cuda-pathfinder
 flash-attn
 bitsandbytes
 onnxruntime-gpu
+
+# Distributed training & optimization
+deepspeed
+pytorch-lightning
+torchmetrics
+
+# GPU monitoring (Python)
+pynvml
+gpustat
+nvitop
+
+# Inference optimization
+vllm
+optimum

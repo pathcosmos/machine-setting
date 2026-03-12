@@ -86,7 +86,7 @@ while [[ $# -gt 0 ]]; do
             echo "Recovery options:"
             echo "  --resume          Resume from last failed/incomplete stage"
             echo "  --reset           Reset state and start from scratch"
-            echo "  --from <N>        Start from stage N (1-6), mark earlier stages as done"
+            echo "  --from <N>        Start from stage N (1-7), mark earlier stages as done"
             echo "  --doctor          Run health check"
             echo "  --recover         Auto-recover broken components"
             echo "  --uninstall       Uninstall (pass additional flags after --uninstall)"
@@ -141,7 +141,7 @@ if [ "$OPT_RESET" = true ]; then
 elif [ -n "$OPT_FROM" ]; then
     # Mark stages before OPT_FROM as done
     echo "  Starting from stage $OPT_FROM (marking earlier stages as done)..."
-    for n in 1 2 3 4 5 6; do
+    for n in 1 2 3 4 5 6 7; do
         _name=$(_stage_name "$n")
         if [ "$n" -lt "$OPT_FROM" ]; then
             checkpoint_write_key "STAGE_${n}_${_name}" "done"
@@ -154,7 +154,7 @@ elif [ "$OPT_RESUME" = true ]; then
 elif [ -f "$CHECKPOINT_STATE" ]; then
     # Check for previous state interactively
     _any_progress=false
-    for n in 1 2 3 4 5 6; do
+    for n in 1 2 3 4 5 6 7; do
         _name=$(_stage_name "$n")
         _state=$(checkpoint_get_state "$n" "$_name")
         if [ "$_state" != "pending" ] && [ -n "$_state" ]; then
@@ -183,16 +183,16 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 # ============================================================
-# [1/6] Hardware Detection
+# [1/7] Hardware Detection
 # ============================================================
 if checkpoint_is_done 1 HARDWARE; then
-    echo "[1/6] Hardware Detection... already done, skipping"
+    echo "[1/7] Hardware Detection... already done, skipping"
     [ -f "$HOME/.machine_setting_profile" ] && source "$HOME/.machine_setting_profile"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_HARDWARE:-}" = "skip" ]; then
-    echo "[1/6] Hardware Detection... skipped (pre-flight)"
+    echo "[1/7] Hardware Detection... skipped (pre-flight)"
     [ -f "$HOME/.machine_setting_profile" ] && source "$HOME/.machine_setting_profile"
 else
-    echo "[1/6] Hardware Detection..."
+    echo "[1/7] Hardware Detection..."
     checkpoint_start_stage 1 HARDWARE
     checkpoint_trap_setup 1 HARDWARE
 
@@ -214,40 +214,83 @@ if [ -z "$PROFILE" ]; then
 fi
 
 # ============================================================
-# [2/6] Python Setup
+# [2/7] NVIDIA GPU Stack (driver, CUDA, cuDNN, NCCL)
 # ============================================================
-if checkpoint_is_done 2 PYTHON; then
-    echo "[2/6] Python Setup... already done, skipping"
-elif [ "$USE_PLAN" = true ] && [ "${PLAN_PYTHON:-}" = "skip" ]; then
-    echo "[2/6] Python Setup... skipped (pre-flight)"
+if checkpoint_is_done 2 NVIDIA; then
+    echo "[2/7] NVIDIA GPU Stack... already done, skipping"
+elif [ "$USE_PLAN" = true ] && [ "${PLAN_NVIDIA:-}" = "skip" ]; then
+    echo "[2/7] NVIDIA GPU Stack... skipped (pre-flight)"
+elif [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+    echo "[2/7] NVIDIA GPU Stack... skipped (no NVIDIA GPU)"
+    checkpoint_write_key "STAGE_2_NVIDIA" "skipped"
+elif [ "$(uname -s)" != "Linux" ]; then
+    echo "[2/7] NVIDIA GPU Stack... skipped (Linux-only)"
+    checkpoint_write_key "STAGE_2_NVIDIA" "skipped"
+elif [ "${INSTALL_NVIDIA:-true}" = false ]; then
+    echo "[2/7] NVIDIA GPU Stack... skipped (disabled in profile)"
+    checkpoint_write_key "STAGE_2_NVIDIA" "skipped"
 else
-    echo "[2/6] Python Setup"
+    echo "[2/7] NVIDIA GPU Stack"
+
+    NVIDIA_ARGS=""
+    [ "${NVIDIA_ENTERPRISE:-false}" = true ] && NVIDIA_ARGS="$NVIDIA_ARGS --enterprise"
+    [ "${NVIDIA_NO_DRIVER:-false}" = true ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-driver"
+    [ -n "${NVIDIA_DRIVER_VERSION:-}" ] && NVIDIA_ARGS="$NVIDIA_ARGS --driver-version $NVIDIA_DRIVER_VERSION"
+    [ -n "${NVIDIA_CUDA_VERSION:-}" ] && NVIDIA_ARGS="$NVIDIA_ARGS --cuda-version $NVIDIA_CUDA_VERSION"
+    [ "${NVIDIA_OPEN_KERNEL:-auto}" != "auto" ] && {
+        [ "$NVIDIA_OPEN_KERNEL" = true ] && NVIDIA_ARGS="$NVIDIA_ARGS --open-kernel"
+        [ "$NVIDIA_OPEN_KERNEL" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --proprietary"
+    }
+    [ "${NVIDIA_CONTAINER_TOOLKIT:-true}" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-container-toolkit"
+    [ "${NVIDIA_SYSTEM_TOOLS:-true}" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-system-tools"
+    [ "${NVIDIA_KERNEL_TUNING:-true}" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-kernel-tuning"
+
+    checkpoint_start_stage 2 NVIDIA
+    checkpoint_trap_setup 2 NVIDIA
+
+    echo "  → Installing NVIDIA stack (driver, CUDA, cuDNN, tools)..."
+    bash "$SCRIPT_DIR/scripts/install-nvidia.sh" $NVIDIA_ARGS
+
+    checkpoint_trap_clear
+    checkpoint_complete_stage 2 NVIDIA
+fi
+echo ""
+
+# ============================================================
+# [3/7] Python Setup
+# ============================================================
+if checkpoint_is_done 3 PYTHON; then
+    echo "[3/7] Python Setup... already done, skipping"
+elif [ "$USE_PLAN" = true ] && [ "${PLAN_PYTHON:-}" = "skip" ]; then
+    echo "[3/7] Python Setup... skipped (pre-flight)"
+else
+    echo "[3/7] Python Setup"
     if [ "$INTERACTIVE" = true ]; then
         read -rp "  Python version [$PYTHON_VERSION]: " INPUT
         [ -n "$INPUT" ] && PYTHON_VERSION="$INPUT"
     fi
 
-    checkpoint_start_stage 2 PYTHON
+    checkpoint_start_stage 3 PYTHON
     checkpoint_save_metadata "" "$PYTHON_VERSION"
-    checkpoint_trap_setup 2 PYTHON
+    checkpoint_trap_setup 3 PYTHON
 
     echo "  → Installing Python $PYTHON_VERSION via uv..."
     bash "$SCRIPT_DIR/scripts/install-python.sh" "$PYTHON_VERSION"
 
     checkpoint_trap_clear
-    checkpoint_complete_stage 2 PYTHON
+    checkpoint_complete_stage 3 PYTHON
 fi
 echo ""
 
 # ============================================================
-# [3/6] AI Environment
+# [4/7] AI Environment
 # ============================================================
-if checkpoint_is_done 3 VENV; then
-    echo "[3/6] AI Environment... already done, skipping"
+if checkpoint_is_done 4 VENV; then
+    echo "[4/7] AI Environment... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_VENV:-}" = "skip" ]; then
-    echo "[3/6] AI Environment... skipped (pre-flight)"
+    echo "[4/7] AI Environment... skipped (pre-flight)"
 else
-    echo "[3/6] AI Environment"
+    echo "[4/7] AI Environment"
 
     if [ -z "$VENV_MODE" ]; then
         if [ "$INTERACTIVE" = true ]; then
@@ -287,9 +330,9 @@ else
         fi
     fi
 
-    checkpoint_start_stage 3 VENV
+    checkpoint_start_stage 4 VENV
     checkpoint_save_metadata "$RESOLVED_VENV_PATH" "$PYTHON_VERSION"
-    checkpoint_trap_setup 3 VENV
+    checkpoint_trap_setup 4 VENV
 
     GPU_LABEL="CPU mode"
     [ "${GPU_BACKEND:-none}" = "cuda" ] && GPU_LABEL="GPU mode (CUDA)"
@@ -304,19 +347,19 @@ else
     bash "$SCRIPT_DIR/scripts/setup-venv.sh" $VENV_ARGS --python "$PYTHON_VERSION" $VENV_EXTRA_ARGS
 
     checkpoint_trap_clear
-    checkpoint_complete_stage 3 VENV
+    checkpoint_complete_stage 4 VENV
 fi
 echo ""
 
 # ============================================================
-# [4/6] Node.js (optional)
+# [5/7] Node.js (optional)
 # ============================================================
-if checkpoint_is_done 4 NODE; then
-    echo "[4/6] Node.js... already done, skipping"
+if checkpoint_is_done 5 NODE; then
+    echo "[5/7] Node.js... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_NODE:-}" = "skip" ]; then
-    echo "[4/6] Node.js... skipped (pre-flight)"
+    echo "[5/7] Node.js... skipped (pre-flight)"
 else
-    echo "[4/6] Node.js (optional)"
+    echo "[5/7] Node.js (optional)"
     if [ "$USE_PLAN" = true ] && [ "${PLAN_NODE:-}" = "run" ]; then
         OPT_NODE=true
     fi
@@ -335,30 +378,30 @@ else
     fi
 
     if [ "$OPT_NODE" = true ]; then
-        checkpoint_start_stage 4 NODE
-        checkpoint_trap_setup 4 NODE
+        checkpoint_start_stage 5 NODE
+        checkpoint_trap_setup 5 NODE
 
         echo "  → Installing NVM + Node.js..."
         bash "$SCRIPT_DIR/scripts/install-node.sh" "$NODE_VERSION"
 
         checkpoint_trap_clear
-        checkpoint_complete_stage 4 NODE
+        checkpoint_complete_stage 5 NODE
     else
         echo "  → Skipped"
-        checkpoint_write_key "STAGE_4_NODE" "skipped"
+        checkpoint_write_key "STAGE_5_NODE" "skipped"
     fi
 fi
 echo ""
 
 # ============================================================
-# [5/6] Java (optional)
+# [6/7] Java (optional)
 # ============================================================
-if checkpoint_is_done 5 JAVA; then
-    echo "[5/6] Java... already done, skipping"
+if checkpoint_is_done 6 JAVA; then
+    echo "[6/7] Java... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_JAVA:-}" = "skip" ]; then
-    echo "[5/6] Java... skipped (pre-flight)"
+    echo "[6/7] Java... skipped (pre-flight)"
 else
-    echo "[5/6] Java (optional)"
+    echo "[6/7] Java (optional)"
     if [ "$USE_PLAN" = true ] && [ "${PLAN_JAVA:-}" = "run" ]; then
         OPT_JAVA=true
     fi
@@ -377,37 +420,37 @@ else
     fi
 
     if [ "$OPT_JAVA" = true ]; then
-        checkpoint_start_stage 5 JAVA
-        checkpoint_trap_setup 5 JAVA
+        checkpoint_start_stage 6 JAVA
+        checkpoint_trap_setup 6 JAVA
 
         echo "  → Installing SDKMAN + Java ${JAVA_VERSION}..."
         bash "$SCRIPT_DIR/scripts/install-java.sh" "$JAVA_VERSION"
 
         checkpoint_trap_clear
-        checkpoint_complete_stage 5 JAVA
+        checkpoint_complete_stage 6 JAVA
     else
         echo "  → Skipped"
-        checkpoint_write_key "STAGE_5_JAVA" "skipped"
+        checkpoint_write_key "STAGE_6_JAVA" "skipped"
     fi
 fi
 echo ""
 
 # ============================================================
-# [6/6] Shell Integration
+# [7/7] Shell Integration
 # ============================================================
-if checkpoint_is_done 6 SHELL; then
-    echo "[6/6] Shell Integration... already done, skipping"
+if checkpoint_is_done 7 SHELL; then
+    echo "[7/7] Shell Integration... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_SHELL:-}" = "skip" ]; then
-    echo "[6/6] Shell Integration... skipped (pre-flight)"
+    echo "[7/7] Shell Integration... skipped (pre-flight)"
 else
-    echo "[6/6] Shell Integration"
+    echo "[7/7] Shell Integration"
 
     # Backup RC files before modification
     backup_shell_rc "$HOME/.bashrc"
     backup_shell_rc "$HOME/.zshrc"
 
-    checkpoint_start_stage 6 SHELL
-    checkpoint_trap_setup 6 SHELL
+    checkpoint_start_stage 7 SHELL
+    checkpoint_trap_setup 7 SHELL
 
     echo "  → Configuring shell modules (bash + zsh)..."
     bash "$SCRIPT_DIR/shell/install-shell.sh"
@@ -416,7 +459,7 @@ else
     git -C "$SCRIPT_DIR" config core.hooksPath .githooks 2>/dev/null || true
 
     checkpoint_trap_clear
-    checkpoint_complete_stage 6 SHELL
+    checkpoint_complete_stage 7 SHELL
 fi
 
 # Clean up plan file

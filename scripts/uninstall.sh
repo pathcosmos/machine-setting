@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --component <list>     Remove specific components (comma-separated)"
             echo "  --keep-config          Keep config & state, remove runtimes only"
             echo ""
-            echo "Components: venv, python, node, java, shell, config"
+            echo "Components: nvidia, venv, python, node, java, shell, config"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -71,14 +71,29 @@ get_dir_size() {
 }
 
 # Component info arrays
-declare -a COMP_NAMES=("venv" "python" "node" "java" "shell" "config")
+declare -a COMP_NAMES=("nvidia" "venv" "python" "node" "java" "shell" "config")
 declare -a COMP_LABELS=()
 declare -a COMP_FOUND=()     # true/false
 declare -a COMP_SELECTED=()  # true/false
 declare -a COMP_SIZES=()
 
 detect_components() {
-    # 1) venv
+    # 1) nvidia
+    local has_nvidia=false
+    if command -v nvidia-smi &>/dev/null || dpkg -l 'cuda-toolkit*' 2>/dev/null | grep -q '^ii'; then
+        has_nvidia=true
+    fi
+    COMP_FOUND+=("$has_nvidia")
+    COMP_SIZES+=("N/A")
+    if [ "$has_nvidia" = true ]; then
+        local nv_driver=""
+        nv_driver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
+        COMP_LABELS+=("NVIDIA stack (driver $nv_driver, CUDA, cuDNN, tools)")
+    else
+        COMP_LABELS+=("NVIDIA stack (not installed)")
+    fi
+
+    # 3) venv
     if [ -d "$VENV_PATH" ]; then
         COMP_FOUND+=(true)
         COMP_SIZES+=("$(get_dir_size "$VENV_PATH")")
@@ -156,6 +171,23 @@ detect_components() {
 # Removal functions
 # ============================================================
 
+remove_nvidia() {
+    echo "  Removing NVIDIA stack..."
+    if [ -f "$SCRIPT_DIR/install-nvidia.sh" ]; then
+        bash "$SCRIPT_DIR/install-nvidia.sh" --uninstall
+    else
+        # Manual removal fallback
+        sudo apt-get purge -y 'nvidia-*' 'libnvidia-*' 'cuda-*' 'libcuda*' \
+            'cudnn*' 'libcudnn*' 'libnccl*' 'datacenter-gpu-manager' \
+            nvidia-container-toolkit 2>/dev/null || true
+        sudo apt-get autoremove -y 2>/dev/null || true
+        sudo rm -f /usr/local/cuda 2>/dev/null || true
+        sudo rm -f /etc/sysctl.d/99-machine-setting-gpu.conf 2>/dev/null || true
+        sudo rm -f /etc/security/limits.d/99-machine-setting-gpu.conf 2>/dev/null || true
+    fi
+    echo "  Done. Reboot recommended."
+}
+
 remove_venv() {
     if [ -d "$VENV_PATH" ]; then
         echo "  Removing virtual environment ($VENV_PATH)..."
@@ -219,6 +251,7 @@ remove_config() {
 remove_component() {
     local idx="$1"
     case "${COMP_NAMES[$idx]}" in
+        nvidia) remove_nvidia ;;
         venv)   remove_venv ;;
         python) remove_python ;;
         node)   remove_node ;;
@@ -271,7 +304,7 @@ case "$MODE" in
 
     all)
         if [ "$KEEP_CONFIG" = true ]; then
-            COMP_SELECTED[5]=false  # Don't remove config
+            COMP_SELECTED[6]=false  # Don't remove config
         fi
 
         echo ""
@@ -341,7 +374,7 @@ case "$MODE" in
                     echo ""
                     echo "Toggle numbers, 'a' for all, Enter to proceed:"
                     ;;
-                [1-6])
+                [1-7])
                     idx=$((input - 1))
                     if [ "${COMP_FOUND[$idx]}" = true ]; then
                         if [ "${COMP_SELECTED[$idx]}" = true ]; then
@@ -355,7 +388,7 @@ case "$MODE" in
                     echo "Toggle numbers, 'a' for all, Enter to proceed:"
                     ;;
                 *)
-                    echo "  Invalid input. Enter 1-6, 'a', or Enter to proceed."
+                    echo "  Invalid input. Enter 1-7, 'a', or Enter to proceed."
                     ;;
             esac
         done

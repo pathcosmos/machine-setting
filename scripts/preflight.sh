@@ -185,6 +185,79 @@ check_hardware_profile() {
     fi
 }
 
+check_nvidia() {
+    # Skip on non-Linux, non-CUDA systems
+    if [ "$(uname -s)" != "Linux" ] || [ "$_GPU_BACKEND" != "cuda" ]; then
+        COMP_NAMES+=("NVIDIA Stack")
+        COMP_KEYS+=("NVIDIA")
+        COMP_STATUS+=("not applicable")
+        COMP_ACTIONS+=("skip")
+        COMP_DETAILS+=("No NVIDIA GPU or not Linux")
+        COMP_SELECTED+=(0)
+        return
+    fi
+
+    # Check if INSTALL_NVIDIA is disabled
+    if [ "${INSTALL_NVIDIA:-true}" = false ]; then
+        COMP_NAMES+=("NVIDIA Stack")
+        COMP_KEYS+=("NVIDIA")
+        COMP_STATUS+=("disabled in profile")
+        COMP_ACTIONS+=("skip")
+        COMP_DETAILS+=("INSTALL_NVIDIA=false")
+        COMP_SELECTED+=(0)
+        return
+    fi
+
+    local has_driver=false has_cuda=false has_cudnn=false
+    local driver_ver="" cuda_ver="" cudnn_ver=""
+
+    # Check driver
+    if command -v nvidia-smi &>/dev/null; then
+        driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
+        [ -n "$driver_ver" ] && has_driver=true
+    fi
+
+    # Check CUDA
+    if command -v nvcc &>/dev/null; then
+        cuda_ver=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+        [ -n "$cuda_ver" ] && has_cuda=true
+    elif [ -x /usr/local/cuda/bin/nvcc ]; then
+        cuda_ver=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+        [ -n "$cuda_ver" ] && has_cuda=true
+    fi
+
+    # Check cuDNN
+    cudnn_ver=$(dpkg -l 'cudnn9-*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+    [ -n "$cudnn_ver" ] && has_cudnn=true
+
+    if [ "$has_driver" = true ] && [ "$has_cuda" = true ] && [ "$has_cudnn" = true ]; then
+        COMP_NAMES+=("NVIDIA Stack")
+        COMP_KEYS+=("NVIDIA")
+        COMP_STATUS+=("driver $driver_ver / CUDA $cuda_ver / cuDNN $cudnn_ver")
+        COMP_ACTIONS+=("skip")
+        COMP_DETAILS+=("Fully installed")
+        COMP_SELECTED+=(0)
+    elif [ "$has_driver" = true ] || [ "$has_cuda" = true ]; then
+        local missing=""
+        [ "$has_driver" = false ] && missing+="driver "
+        [ "$has_cuda" = false ] && missing+="CUDA "
+        [ "$has_cudnn" = false ] && missing+="cuDNN "
+        COMP_NAMES+=("NVIDIA Stack")
+        COMP_KEYS+=("NVIDIA")
+        COMP_STATUS+=("partial (missing: $missing)")
+        COMP_ACTIONS+=("run")
+        COMP_DETAILS+=("Install missing: $missing")
+        COMP_SELECTED+=(1)
+    else
+        COMP_NAMES+=("NVIDIA Stack")
+        COMP_KEYS+=("NVIDIA")
+        COMP_STATUS+=("not installed")
+        COMP_ACTIONS+=("run")
+        COMP_DETAILS+=("Install driver, CUDA, cuDNN, NCCL, tools")
+        COMP_SELECTED+=(1)
+    fi
+}
+
 check_python() {
     local target_ver="$PYTHON_VERSION"
     local python_bin=""
@@ -639,6 +712,7 @@ detect_system
 
 # 2. Check each component
 check_hardware_profile
+check_nvidia
 check_python
 check_venv_and_packages
 check_node

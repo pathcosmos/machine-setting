@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --recover [component]  Auto-recover (all or specific)"
             echo "  --verify-packages      Verify installed packages vs requirements"
             echo ""
-            echo "Components: disk, hardware, uv, python, venv, packages, node, java, shell, platform"
+            echo "Components: disk, hardware, nvidia, uv, python, venv, packages, node, java, shell, platform"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -186,7 +186,7 @@ check_key_packages() {
 
 check_node() {
     local stage_state
-    stage_state=$(checkpoint_get_state 4 NODE)
+    stage_state=$(checkpoint_get_state 5 NODE)
     if [ "$stage_state" = "skipped" ]; then
         status_skip "Node.js (not installed)"
         return
@@ -216,7 +216,7 @@ check_node() {
 
 check_java() {
     local stage_state
-    stage_state=$(checkpoint_get_state 5 JAVA)
+    stage_state=$(checkpoint_get_state 6 JAVA)
     if [ "$stage_state" = "skipped" ]; then
         status_skip "Java (not installed)"
         return
@@ -264,6 +264,114 @@ check_shell_integration() {
     fi
 }
 
+check_nvidia_driver() {
+    # Skip on non-Linux or non-GPU systems
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        status_skip "NVIDIA driver (not applicable)"
+        return
+    fi
+
+    local stage_state
+    stage_state=$(checkpoint_get_state 2 NVIDIA)
+    if [ "$stage_state" = "skipped" ]; then
+        status_skip "NVIDIA driver (stage skipped)"
+        return
+    fi
+
+    if command -v nvidia-smi &>/dev/null; then
+        local driver_ver
+        driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
+        if [ -n "$driver_ver" ]; then
+            local gpu_info
+            gpu_info=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
+            status_ok "NVIDIA driver ($driver_ver, $gpu_info)"
+        else
+            status_fail "NVIDIA driver (nvidia-smi present but cannot communicate with driver)" "nvidia"
+        fi
+    else
+        status_fail "NVIDIA driver (nvidia-smi not found)" "nvidia"
+    fi
+}
+
+check_cuda_toolkit() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+
+    local stage_state
+    stage_state=$(checkpoint_get_state 2 NVIDIA)
+    if [ "$stage_state" = "skipped" ]; then
+        return
+    fi
+
+    if [ -x /usr/local/cuda/bin/nvcc ]; then
+        local cuda_ver
+        cuda_ver=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+        status_ok "CUDA Toolkit ($cuda_ver)"
+    elif command -v nvcc &>/dev/null; then
+        local cuda_ver
+        cuda_ver=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+        status_ok "CUDA Toolkit ($cuda_ver)"
+    else
+        status_warn "CUDA Toolkit (nvcc not found)"
+    fi
+}
+
+check_cudnn() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+
+    local stage_state
+    stage_state=$(checkpoint_get_state 2 NVIDIA)
+    if [ "$stage_state" = "skipped" ]; then
+        return
+    fi
+
+    local cudnn_ver
+    cudnn_ver=$(dpkg -l 'cudnn9-*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+    if [ -n "$cudnn_ver" ]; then
+        status_ok "cuDNN ($cudnn_ver)"
+    else
+        cudnn_ver=$(dpkg -l 'libcudnn*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+        if [ -n "$cudnn_ver" ]; then
+            status_ok "cuDNN ($cudnn_ver)"
+        else
+            status_warn "cuDNN (not installed)"
+        fi
+    fi
+}
+
+check_nccl() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+
+    if [ "${GPU_COUNT:-1}" -le 1 ]; then
+        return  # NCCL only relevant for multi-GPU
+    fi
+
+    local nccl_ver
+    nccl_ver=$(dpkg -l 'libnccl2' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+    if [ -n "$nccl_ver" ]; then
+        status_ok "NCCL ($nccl_ver)"
+    else
+        status_warn "NCCL (not installed — recommended for multi-GPU)"
+    fi
+}
+
+check_gpu_kernel_tuning() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ]; then
+        return
+    fi
+
+    if [ -f /etc/sysctl.d/99-machine-setting-gpu.conf ]; then
+        status_ok "GPU kernel tuning (sysctl configured)"
+    else
+        status_warn "GPU kernel tuning (not configured — run setup.sh to apply)"
+    fi
+}
+
 check_platform_specific() {
     if [ "$(uname -s)" = "Darwin" ]; then
         if xcode-select -p &>/dev/null; then
@@ -272,18 +380,7 @@ check_platform_specific() {
             status_fail "Xcode CLT (not installed)" "platform"
         fi
     else
-        # Linux: check CUDA driver if GPU expected
-        if [ "${HAS_GPU:-false}" = "true" ] && [ "${GPU_BACKEND:-none}" = "cuda" ]; then
-            if command -v nvidia-smi &>/dev/null; then
-                local driver_ver
-                driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
-                status_ok "CUDA driver ($driver_ver)"
-            else
-                status_warn "CUDA driver (nvidia-smi not found)"
-            fi
-        else
-            status_ok "Platform (Linux, no GPU requirements)"
-        fi
+        status_ok "Platform (Linux)"
     fi
 }
 
@@ -345,11 +442,21 @@ recover_shell() {
     echo "  Done."
 }
 
+recover_nvidia() {
+    echo "  Recovering NVIDIA stack..."
+    if [ -f "$SCRIPT_DIR/install-nvidia.sh" ]; then
+        bash "$SCRIPT_DIR/install-nvidia.sh"
+    else
+        echo "  install-nvidia.sh not found. Re-clone the repository."
+    fi
+    echo "  Done. A reboot may be required."
+}
+
 recover_platform() {
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "  Please run: xcode-select --install"
     else
-        echo "  Platform recovery: check NVIDIA driver installation manually."
+        echo "  Platform-specific recovery: no automated fix available."
     fi
 }
 
@@ -363,6 +470,7 @@ run_recovery() {
     case "$component" in
         disk)       recover_disk ;;
         hardware)   recover_hardware ;;
+        nvidia)     recover_nvidia ;;
         uv)         recover_uv ;;
         python)     recover_python ;;
         venv)       recover_venv ;;
@@ -455,6 +563,11 @@ echo ""
 # Run all checks
 check_disk_space
 check_hardware_profile
+check_nvidia_driver
+check_cuda_toolkit
+check_cudnn
+check_nccl
+check_gpu_kernel_tuning
 check_uv
 check_python
 check_venv

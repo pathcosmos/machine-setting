@@ -47,6 +47,11 @@ aiokafka==0.13.0
 kafka-python==2.3.0
 paho-mqtt==2.1.0
 
+# High-performance DataFrames & query engines
+polars
+duckdb
+connectorx
+
 # Cloud storage
 boto3==1.34.46
 botocore==1.34.46
