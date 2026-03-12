@@ -187,9 +187,6 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 
 **Disk requirements:** Minimum 15GB free space recommended (with GPU packages)
 
-<details>
-<summary><b>Detailed Package List (click to expand)</b></summary>
-
 #### core — Core AI/ML (`requirements-core.txt`, ~150 packages)
 
 | Category | Packages | Description |
@@ -264,8 +261,6 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | `onnxruntime` | CPU inference engine (no GPU version on macOS) |
 
 **Installation combo example:** GPU workstation = `core` + `gpu` + `data` + `web` ≈ **230+ packages**
-
-</details>
 
 ### [5/7] Node.js (optional)
 
