@@ -1,5 +1,7 @@
 # Machine Setting
 
+> 🌐 [English](README_EN.md) | **한국어**
+
 Portable AI development environment system. One command to set up Python + AI/ML packages + optional Node.js/Java on any machine, with automatic GPU/CPU detection and cross-machine sync.
 
 **Supported platforms**: Linux (x86_64, NVIDIA CUDA) + macOS (Apple Silicon M1+, MPS)
@@ -47,7 +49,7 @@ aienv
 
 ### Overview
 
-`setup.sh`는 6단계 파이프라인으로 동작하며, 각 단계는 **체크포인트 시스템**으로 상태가 추적됩니다. 설치가 중간에 실패해도 완료된 단계를 건너뛰고 실패 지점부터 재개할 수 있습니다.
+`setup.sh`는 7단계 파이프라인으로 동작하며, 각 단계는 **체크포인트 시스템**으로 상태가 추적됩니다. 설치가 중간에 실패해도 완료된 단계를 건너뛰고 실패 지점부터 재개할 수 있습니다.
 
 ### Execution Flow
 
@@ -63,7 +65,7 @@ aienv
     │     → 이전 실패 있으면: Resume / Reset / Cancel 메뉴 표시
     │     → 모두 완료 상태면: Reinstall / Cancel 메뉴 표시
     │
-    └─ 3) 6단계 설치 파이프라인 실행
+    └─ 3) 7단계 설치 파이프라인 실행
           각 단계마다 checkpoint 기록 → 실패 시 자동 rollback
 ```
 
@@ -73,11 +75,12 @@ aienv
 
 ```
 STAGE_1_HARDWARE=done
-STAGE_2_PYTHON=done
-STAGE_3_VENV=in_progress    ← 이 단계에서 실패
-STAGE_4_NODE=pending
-STAGE_5_JAVA=pending
-STAGE_6_SHELL=pending
+STAGE_2_NVIDIA=done
+STAGE_3_PYTHON=done
+STAGE_4_VENV=in_progress    ← 이 단계에서 실패
+STAGE_5_NODE=pending
+STAGE_6_JAVA=pending
+STAGE_7_SHELL=pending
 ```
 
 각 단계가 실패하면:
@@ -89,7 +92,7 @@ STAGE_6_SHELL=pending
 
 ## Installation Flow
 
-### [1/6] Hardware Detection
+### [1/7] Hardware Detection
 
 시스템 하드웨어를 자동 감지하여 `~/.machine_setting_profile`에 저장합니다.
 
@@ -101,6 +104,7 @@ STAGE_6_SHELL=pending
 | NGC 컨테이너 | torch NV 버전 체크 + `/opt/nvidia` 존재 | N/A |
 
 감지 결과에 따라 최적 프로필이 자동 선택됩니다:
+- NVIDIA GPU (Datacenter) → `gpu-enterprise`
 - NVIDIA GPU → `gpu-workstation`
 - Apple Silicon → `mac-apple-silicon`
 - NGC 컨테이너 → `ngc-container`
@@ -108,7 +112,48 @@ STAGE_6_SHELL=pending
 - RAM ≥ 8GB → `laptop`
 - 그 외 → `minimal`
 
-### [2/6] Python Setup
+### [2/7] NVIDIA GPU Stack (Linux 전용)
+
+시스템 레벨 NVIDIA GPU 소프트웨어 스택을 자동으로 설치합니다. `scripts/install-nvidia.sh`가 9개 서브 스테이지를 실행합니다.
+
+**자동 스킵 조건:** 비-Linux OS, NVIDIA GPU 미감지, NGC 컨테이너 (이미 설치됨), `INSTALL_NVIDIA=false`
+
+**GPU 티어 자동 분류:**
+
+| 티어 | GPU 예시 | 동작 |
+|------|----------|------|
+| Consumer | GeForce RTX 3090/4090 | 기본 설치 (드라이버 + CUDA + cuDNN + NCCL) |
+| Professional | RTX A6000, L40 | 기본 설치 |
+| Datacenter | A100, H100, H200, B200 | 기본 + 엔터프라이즈 도구 자동 활성화 |
+
+**설치 구성요소:**
+
+| 구성요소 | 설명 | 설정 |
+|----------|------|------|
+| NVIDIA Driver | `ubuntu-drivers` 자동 추천 또는 수동 버전 지정 | `NVIDIA_DRIVER_VERSION` |
+| CUDA Toolkit | `cuda-toolkit` 메타패키지, `/usr/local/cuda` 심볼릭 링크 | `NVIDIA_CUDA_VERSION` |
+| cuDNN 9.x | DNN 가속 라이브러리 (`cudnn9-cuda-XX`) | 자동 |
+| NCCL | 멀티 GPU 집합 통신 (단일 GPU면 스킵) | 자동 |
+| Container Toolkit | Docker GPU 지원 (Docker 미설치 시 스킵) | `NVIDIA_CONTAINER_TOOLKIT` |
+| Enterprise Tools | DCGM, Fabric Manager, GDS, nvidia-peermem | `NVIDIA_ENTERPRISE` |
+| System Utilities | numactl, hwloc, nvtop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
+| Kernel Tuning | sysctl (vm.max_map_count, shmmax 등), memlock limits, CPU governor | `NVIDIA_KERNEL_TUNING` |
+
+**Open vs Proprietary Kernel Modules:**
+- `NVIDIA_OPEN_KERNEL=auto` (기본): Turing+ (RTX 20xx 이상) → open, 구형 → proprietary
+- `NVIDIA_OPEN_KERNEL=true`: 강제 open 커널 모듈
+- `NVIDIA_OPEN_KERNEL=false`: 강제 proprietary 커널 모듈
+
+**Secure Boot:** MOK (Machine Owner Key) 등록 안내가 자동으로 표시됩니다.
+
+**커널 튜닝 상세:**
+- `vm.max_map_count=1048576` (대규모 메모리 매핑)
+- RAM 기반 동적 `shmmax`/`shmall` 계산
+- `memlock unlimited` (GPU 메모리 잠금)
+- TCP 버퍼 최적화 (분산 학습용)
+- CPU governor → performance
+
+### [3/7] Python Setup
 
 [uv](https://github.com/astral-sh/uv)를 통해 Python을 설치합니다 (기본: 3.12).
 
@@ -116,7 +161,7 @@ STAGE_6_SHELL=pending
 - `uv python install 3.12` 으로 관리형 Python 설치
 - 시스템 Python에 영향 없음
 
-### [3/6] AI Environment (Virtual Environment + Packages)
+### [4/7] AI Environment (Virtual Environment + Packages)
 
 venv 생성 후 패키지 그룹별로 설치합니다.
 
@@ -130,18 +175,18 @@ venv 생성 후 패키지 그룹별로 설치합니다.
 **패키지 그룹:**
 | 그룹 | 파일 | 내용 |
 |------|------|------|
-| core | `requirements-core.txt` | transformers, accelerate, peft, wandb, numpy 등 |
-| data | `requirements-data.txt` | pandas, SQLAlchemy, psycopg2, pypdf, openpyxl 등 |
+| core | `requirements-core.txt` | transformers, accelerate, peft, wandb, numpy, mlflow, tensorboard, optuna 등 |
+| data | `requirements-data.txt` | pandas, polars, duckdb, SQLAlchemy, psycopg2, pypdf, openpyxl 등 |
 | web | `requirements-web.txt` | fastapi, uvicorn, httpx, gradio, cryptography 등 |
-| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes (자동 감지) |
+| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes, deepspeed, vllm, pynvml, nvitop 등 |
 | mps | `requirements-mps.txt` | torch (Apple Silicon MPS 포함) |
 | cpu | `requirements-cpu.txt` | torch CPU-only 빌드 |
 
-GPU/MPS/CPU 패키지는 [1/6]에서 감지된 하드웨어에 따라 자동으로 하나만 선택됩니다.
+GPU/MPS/CPU 패키지는 [1/7]에서 감지된 하드웨어에 따라 자동으로 하나만 선택됩니다.
 
 **디스크 요구사항:** 최소 15GB 여유 공간 권장 (GPU 패키지 포함 시)
 
-### [4/6] Node.js (선택)
+### [5/7] Node.js (선택)
 
 NVM (Node Version Manager)을 설치하고, Node.js LTS를 설치합니다.
 
@@ -149,14 +194,14 @@ NVM (Node Version Manager)을 설치하고, Node.js LTS를 설치합니다.
 - Interactive 모드에서 설치 여부를 물어봄
 - Lazy loading: 셸 시작 시 NVM을 로드하지 않고, `node`/`npm` 최초 실행 시 로드
 
-### [5/6] Java (선택)
+### [6/7] Java (선택)
 
 SDKMAN을 설치하고, Java 21 (LTS)을 설치합니다.
 
 - 프로필에 따라 기본 선택/미선택 결정
 - Lazy loading: `sdk`/`java` 최초 실행 시 로드
 
-### [6/6] Shell Integration
+### [7/7] Shell Integration
 
 `.bashrc`와 `.zshrc`에 모듈 소싱 블록을 추가합니다.
 
@@ -202,6 +247,20 @@ done
 | `~/.machine_setting_profile` | 하드웨어 감지 결과 | `make uninstall` |
 | `~/.bashrc.local` | 사용자 시크릿 (자동 생성 템플릿) | **절대 삭제 안함** |
 | `~/.zshrc.local` | zsh용 시크릿 (bashrc.local 심볼릭 링크) | **절대 삭제 안함** |
+
+### NVIDIA 시스템 파일 (Stage 2에서 설치)
+
+| 경로 | 설명 | 삭제 대상 |
+|------|------|-----------|
+| NVIDIA driver | `nvidia-driver-XXX` 패키지 | `uninstall --component nvidia` |
+| `/usr/local/cuda` | CUDA Toolkit 심볼릭 링크 | `uninstall --component nvidia` |
+| `cuda-toolkit` | CUDA 개발 도구 | `uninstall --component nvidia` |
+| `cudnn9-cuda-*` | cuDNN 9.x 라이브러리 | `uninstall --component nvidia` |
+| `libnccl2`, `libnccl-dev` | NCCL 멀티 GPU 통신 | `uninstall --component nvidia` |
+| `nvidia-container-toolkit` | Docker GPU 지원 | `uninstall --component nvidia` |
+| `/etc/sysctl.d/99-machine-setting-gpu.conf` | GPU 커널 파라미터 | `uninstall --component nvidia` |
+| `/etc/security/limits.d/99-machine-setting-gpu.conf` | memlock/nproc limits | `uninstall --component nvidia` |
+| numactl, hwloc, nvtop, lm-sensors | 시스템 유틸리티 | 수동 삭제 |
 
 ### Shell RC Modifications
 
@@ -315,8 +374,8 @@ make preflight
 ./setup.sh --reset
 
 # 특정 단계부터 시작 (이전 단계는 완료 처리)
-./setup.sh --from 3    # Stage 3 (venv)부터
-./setup.sh --from 6    # Stage 6 (shell)만
+./setup.sh --from 4    # Stage 4 (venv)부터
+./setup.sh --from 7    # Stage 7 (shell)만
 
 # 건강 체크
 ./setup.sh --doctor
@@ -338,7 +397,7 @@ make preflight
 | `--preflight` | Pre-flight check 후 설치 |
 | `--resume` | 실패 지점부터 재개 |
 | `--reset` | 상태 초기화 후 처음부터 |
-| `--from <N>` | Stage N (1-6)부터 시작 |
+| `--from <N>` | Stage N (1-7)부터 시작 |
 | `--doctor` | 건강 체크 |
 | `--recover` | 자동 복구 |
 | `--uninstall` | 삭제 (추가 플래그 가능) |
@@ -347,14 +406,15 @@ make preflight
 
 ## Profiles
 
-| Profile | Platform | GPU Backend | Node | Java | Packages |
-|---------|----------|-------------|------|------|----------|
-| ngc-container | NGC/Linux | CUDA (NV symlink) | No | No | core+data+web+nv-link |
-| gpu-workstation | Linux | CUDA | Yes | Yes | core+data+web+gpu |
-| mac-apple-silicon | macOS | MPS | Yes | No | core+data+web+mps |
-| cpu-server | Linux | None | Yes | Yes | core+data+web+cpu |
-| laptop | Any | None | Yes | No | core+data+web+cpu |
-| minimal | Any | None | No | No | core only |
+| Profile | Platform | GPU Backend | NVIDIA Stage | Node | Java | Packages |
+|---------|----------|-------------|-------------|------|------|----------|
+| gpu-enterprise | Linux | CUDA (Enterprise) | Full + DCGM/FM/GDS | No | No | core+data+web+gpu |
+| ngc-container | NGC/Linux | CUDA (NV symlink) | Skip (pre-installed) | No | No | core+data+web+nv-link |
+| gpu-workstation | Linux | CUDA | Full (consumer) | Yes | Yes | core+data+web+gpu |
+| mac-apple-silicon | macOS | MPS | Skip (N/A) | Yes | No | core+data+web+mps |
+| cpu-server | Linux | None | Skip (no GPU) | Yes | Yes | core+data+web+cpu |
+| laptop | Any | None | Skip (no GPU) | Yes | No | core+data+web+cpu |
+| minimal | Any | None | Skip | No | No | core only |
 
 ### Machine-specific 설정
 
@@ -376,7 +436,38 @@ cp config/machine.conf.example config/machine.conf
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
 | Any | None | CPU fallback | 자동 |
 
-### CUDA 버전 매칭
+### NVIDIA System-Level Install (Stage 2)
+
+[2/7] 단계에서 다음 시스템 레벨 NVIDIA 소프트웨어를 자동 설치합니다:
+
+```bash
+# 자동 모드 (기본) — GPU 감지 후 최적 구성 자동 설치
+./setup.sh
+
+# 수동: NVIDIA 스크립트 직접 실행
+./scripts/install-nvidia.sh                    # 전체 자동
+./scripts/install-nvidia.sh --driver-only      # 드라이버만
+./scripts/install-nvidia.sh --no-driver        # 드라이버 제외 (CUDA/cuDNN/NCCL만)
+./scripts/install-nvidia.sh --enterprise       # 엔터프라이즈 도구 포함
+./scripts/install-nvidia.sh --dry-run          # 설치 미리보기
+./scripts/install-nvidia.sh --uninstall        # NVIDIA 스택 전체 제거
+```
+
+**NVIDIA 설정 옵션** (`config/default.conf` 또는 `config/machine.conf`):
+
+| 설정 | 기본값 | 설명 |
+|------|--------|------|
+| `INSTALL_NVIDIA` | `true` | NVIDIA 스테이지 전체 활성화/비활성화 |
+| `NVIDIA_DRIVER_VERSION` | `""` (자동) | 드라이버 버전 (비어있으면 추천 버전 자동 선택) |
+| `NVIDIA_CUDA_VERSION` | `""` (최신) | CUDA 버전 |
+| `NVIDIA_OPEN_KERNEL` | `auto` | open/proprietary 커널 모듈 선택 |
+| `NVIDIA_ENTERPRISE` | `false` | 엔터프라이즈 도구 (DCGM, FM, GDS, peermem) |
+| `NVIDIA_NO_DRIVER` | `false` | 드라이버 설치 스킵 |
+| `NVIDIA_CONTAINER_TOOLKIT` | `true` | Docker GPU 지원 |
+| `NVIDIA_SYSTEM_TOOLS` | `true` | 빌드 도구, 모니터링 도구 |
+| `NVIDIA_KERNEL_TUNING` | `true` | 커널/sysctl 최적화 |
+
+### CUDA 버전 매칭 (Python 패키지)
 
 감지된 CUDA 버전에 따라 PyTorch index URL이 자동 선택됩니다 (`config/gpu-index-urls.conf`):
 
@@ -430,13 +521,15 @@ scripts/setup-venv.sh --nv-link
   ─────────────────────────────────────────────────────────────────────────────
   * 1  Hardware Profile     not generated                  → INSTALL
        Generate ~/.machine_setting_profile
-    2  Python 3.12          3.12.8 installed + uv 0.5.14   (ok)
-  * 3  AI Environment       not created                    → INSTALL
+  * 2  NVIDIA GPU Stack     driver 535 / no CUDA           → INSTALL
+       Install CUDA toolkit, cuDNN, NCCL, system tools
+    3  Python 3.12          3.12.8 installed + uv 0.5.14   (ok)
+  * 4  AI Environment       not created                    → INSTALL
        Create ~/ai-env + install [core data web + GPU]
-    4  Node.js              v22.12.0 (NVM)                 (ok)
-  * 5  Java 21              not installed                  → INSTALL
+    5  Node.js              v22.12.0 (NVM)                 (ok)
+  * 6  Java 21              not installed                  → INSTALL
        Install SDKMAN + Java 21
-    6  Shell Integration    configured (.bashrc .zshrc)    (ok)
+    7  Shell Integration    configured (.bashrc .zshrc)    (ok)
 ```
 
 Interactive 모드에서는 항목별로 토글하여 원하는 것만 설치할 수 있습니다.
@@ -460,11 +553,11 @@ make reset
 ### 특정 단계만 재설치
 
 ```bash
-# Stage 3 (venv)부터 재설치 — Stage 1, 2는 건너뜀
-./setup.sh --from 3
+# Stage 4 (venv)부터 재설치 — Stage 1~3은 건너뜀
+./setup.sh --from 4
 
-# Stage 6 (shell integration)만 재설치
-./setup.sh --from 6
+# Stage 7 (shell integration)만 재설치
+./setup.sh --from 7
 ```
 
 ### venv만 재생성
@@ -506,12 +599,13 @@ make uninstall
 === Machine Setting Uninstall ===
 
 Components found:
-  [1] ✓ AI Virtual Environment (~/ai-env, 12G)
-  [2] ✓ Python via uv (1.8G)
-  [3] ✓ NVM + Node.js (287M)
-  [4]   Java/SDKMAN (not installed)
-  [5] ✓ Shell integration (.bashrc .zshrc)
-  [6] ✓ Config & state files
+  [1] ✓ NVIDIA stack (driver 560.35.03, CUDA, cuDNN, tools)
+  [2] ✓ AI Virtual Environment (~/ai-env, 12G)
+  [3] ✓ Python via uv (1.8G)
+  [4] ✓ NVM + Node.js (287M)
+  [5]   Java/SDKMAN (not installed)
+  [6] ✓ Shell integration (.bashrc .zshrc)
+  [7] ✓ Config & state files
 
 Toggle numbers to select/deselect, 'a' for all, Enter to proceed:
 ```
@@ -532,7 +626,10 @@ Toggle numbers to select/deselect, 'a' for all, Enter to proceed:
 # venv와 Node.js만 삭제
 ./scripts/uninstall.sh --component venv,node
 
-# 사용 가능한 컴포넌트: venv, python, node, java, shell, config
+# NVIDIA 스택만 삭제
+./scripts/uninstall.sh --component nvidia
+
+# 사용 가능한 컴포넌트: nvidia, venv, python, node, java, shell, config
 ```
 
 ### Dry-run (삭제 미리보기)
@@ -572,6 +669,11 @@ make doctor
 |-----------|-----------|
 | Disk space | venv 경로에 1GB 이상 여유 |
 | Hardware profile | `~/.machine_setting_profile` 존재 및 유효성 |
+| NVIDIA driver | 드라이버 로드 상태, `nvidia-smi` 동작 확인 |
+| CUDA toolkit | `nvcc` 존재 및 버전, `/usr/local/cuda` 심볼릭 링크 |
+| cuDNN | cuDNN 라이브러리 설치 상태 |
+| NCCL | NCCL 라이브러리 설치 상태 |
+| GPU kernel tuning | sysctl 파라미터 (vm.max_map_count 등) 적용 여부 |
 | uv | uv 설치 및 버전 |
 | Python | uv로 관리되는 Python 존재 |
 | Virtual environment | venv 디렉토리, bin/python, bin/activate 존재 |
@@ -579,7 +681,7 @@ make doctor
 | Node.js | NVM + Node 설치 상태 (설치 선택 시) |
 | Java | SDKMAN + Java 설치 상태 (설치 선택 시) |
 | Shell integration | .bashrc/.zshrc에 마커 블록 존재 |
-| Platform | Xcode CLT (macOS) / CUDA driver (Linux GPU) |
+| Platform | Xcode CLT (macOS) |
 
 출력 예시:
 
@@ -588,6 +690,11 @@ make doctor
 
   [OK]   Disk space (2847GB free)
   [OK]   Hardware profile
+  [OK]   NVIDIA driver (560.35.03)
+  [OK]   CUDA toolkit (12.6, /usr/local/cuda)
+  [OK]   cuDNN (9.x)
+  [OK]   NCCL (2.x)
+  [OK]   GPU kernel tuning (vm.max_map_count=1048576)
   [OK]   uv (uv 0.5.14)
   [OK]   Python (Python 3.12.8)
   [OK]   Virtual environment (~/ai-env, 247 packages)
@@ -595,9 +702,8 @@ make doctor
   [OK]   Node.js (v22.12.0)
   [SKIP] Java (not installed)
   [OK]   Shell integration (.bashrc .zshrc)
-  [OK]   CUDA driver (560.35.03)
 
-Summary: 9 ok, 0 failed, 0 warnings, 1 skipped
+Summary: 13 ok, 0 failed, 0 warnings, 1 skipped
 All checks passed!
 ```
 
@@ -610,18 +716,20 @@ make recover
 ./scripts/doctor.sh --recover
 
 # 특정 컴포넌트만 복구
+./scripts/doctor.sh --recover nvidia
 ./scripts/doctor.sh --recover python
 ./scripts/doctor.sh --recover venv
 ./scripts/doctor.sh --recover shell
 ```
 
-사용 가능한 복구 대상: `disk`, `hardware`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
+사용 가능한 복구 대상: `disk`, `hardware`, `nvidia`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
 
 각 컴포넌트별 복구 동작:
 
 | 컴포넌트 | 복구 동작 |
 |----------|-----------|
 | hardware | `detect-hardware.sh` 재실행 |
+| nvidia | `install-nvidia.sh` 재실행 (드라이버, CUDA, cuDNN, NCCL) |
 | uv | uv 재설치 (`curl ... \| sh`) |
 | python | uv가 없으면 먼저 설치, 그 후 `uv python install` |
 | venv | venv 재생성 + 패키지 재설치 |
@@ -629,7 +737,7 @@ make recover
 | node | NVM + Node.js 재설치 |
 | java | SDKMAN + Java 재설치 |
 | shell | `install-shell.sh` 재실행 |
-| platform | macOS: Xcode CLT 안내 / Linux: NVIDIA driver 안내 |
+| platform | macOS: Xcode CLT 안내 |
 | disk | 수동 정리 안내 |
 
 ### Package Verification (패키지 무결성 검증)
@@ -750,7 +858,7 @@ export WANDB_API_KEY="..."
 
 ```
 machine_setting/
-├── setup.sh              # Single-entry bootstrap (6-stage pipeline)
+├── setup.sh              # Single-entry bootstrap (7-stage pipeline)
 ├── Makefile              # make setup/update/push/status/doctor/uninstall
 ├── config/
 │   ├── default.conf          # Default settings (Python 3.12, Node LTS, Java 21)
@@ -765,14 +873,15 @@ machine_setting/
 │   └── requirements-web.txt    # Web/API packages
 ├── scripts/
 │   ├── detect-hardware.sh      # GPU/CUDA/MPS/RAM/CPU detection
+│   ├── install-nvidia.sh       # NVIDIA driver/CUDA/cuDNN/NCCL/enterprise tools
 │   ├── install-python.sh       # uv + Python install
 │   ├── setup-venv.sh           # venv creation + package install
 │   ├── install-node.sh         # NVM + Node.js
 │   ├── install-java.sh         # SDKMAN + Java
-│   ├── lib-checkpoint.sh       # Checkpoint/rollback library
-│   ├── preflight.sh            # Pre-flight system check
-│   ├── doctor.sh               # Health check & recovery
-│   ├── uninstall.sh            # Component uninstaller
+│   ├── lib-checkpoint.sh       # Checkpoint/rollback library (7-stage)
+│   ├── preflight.sh            # Pre-flight system check (NVIDIA 포함)
+│   ├── doctor.sh               # Health check & recovery (NVIDIA 체크 포함)
+│   ├── uninstall.sh            # Component uninstaller (NVIDIA 포함)
 │   ├── sync.sh                 # Git sync (push/pull/status)
 │   ├── export-packages.sh      # venv → requirements export
 │   ├── check-env.sh            # AI environment verification
@@ -788,6 +897,7 @@ machine_setting/
 │       ├── 50-ai-env.sh        # aienv/aienv-off + update check
 │       └── 90-local.sh.example # Secrets template
 ├── profiles/                   # Pre-configured machine profiles
+│   ├── gpu-enterprise.conf      # A100/H100/B200 + enterprise tools (DCGM, FM)
 │   ├── gpu-workstation.conf
 │   ├── mac-apple-silicon.conf
 │   ├── ngc-container.conf
@@ -805,7 +915,7 @@ machine_setting/
 
 | 파일 | 위치 | 용도 |
 |------|------|------|
-| `install.state` | `~/.machine_setting/` | 6단계 설치 진행 상태 |
+| `install.state` | `~/.machine_setting/` | 7단계 설치 진행 상태 (STAGE_1~7) |
 | `backups/` | `~/.machine_setting/backups/` | .bashrc/.zshrc 백업 (타임스탬프별) |
 | `.machine_setting_profile` | `~/` | 하드웨어 감지 결과 |
 | `.last-update-check` | 저장소 내 | 마지막 업데이트 체크 타임스탬프 |
@@ -848,7 +958,7 @@ make check
 | 증상 | 해결 |
 |------|------|
 | `aienv: command not found` | `source ~/.bashrc` 또는 새 터미널 열기 |
-| `No venv at ~/ai-env` | `make venv` 또는 `./setup.sh --from 3` |
+| `No venv at ~/ai-env` | `make venv` 또는 `./setup.sh --from 4` |
 | GPU가 감지되지 않음 | `make detect` 후 `make doctor` |
 | 패키지 import 실패 | `make verify` → `make recover` |
 | 설치 중간에 실패 | `./setup.sh --resume` |
