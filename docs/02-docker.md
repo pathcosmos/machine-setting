@@ -41,10 +41,10 @@ deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] \
 
 ### 사용자 권한
 
-`lanco` 사용자가 `docker` 그룹에 포함되어 있어 sudo 없이 docker 명령 사용 가능.
+`user` 사용자가 `docker` 그룹에 포함되어 있어 sudo 없이 docker 명령 사용 가능.
 
 ```bash
-groups lanco
+groups user
 # → ... docker
 ```
 

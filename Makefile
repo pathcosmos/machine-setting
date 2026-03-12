@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry reset plan preflight
+.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -54,6 +54,9 @@ verify: ## Verify installed packages vs requirements
 
 uninstall: ## Interactive uninstall
 	$(REPO_DIR)/scripts/uninstall.sh
+
+dry-run: ## Full system dry-run diagnostic (all 7 stages)
+	$(REPO_DIR)/scripts/dry-run.sh
 
 uninstall-dry: ## Show what would be removed
 	$(REPO_DIR)/scripts/uninstall.sh --dry-run

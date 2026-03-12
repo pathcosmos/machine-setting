@@ -7,7 +7,7 @@
 | 항목 | 값 |
 |------|-----|
 | 상태 | active (running) |
-| 접근 | 172.30.31.2:22 |
+| 접근 | 192.168.1.100:22 |
 
 ## 2. Samba (파일 공유)
 
@@ -18,7 +18,7 @@
 | nmbd | enabled |
 | samba-ad-dc | enabled |
 
-사용자 `lanco`가 `smbuser` 그룹에 포함.
+사용자 `user`가 `smbuser` 그룹에 포함.
 
 ## 3. LXD (컨테이너 가상화)
 
@@ -28,7 +28,7 @@
 | 설치 방법 | Snap |
 | 서비스 | snap.lxd.activate.service (enabled) |
 
-사용자 `lanco`가 `lxd` 그룹에 포함.
+사용자 `user`가 `lxd` 그룹에 포함.
 
 ## 4. MicroK8s
 
@@ -37,7 +37,7 @@
 | 상태 | 미실행 (not running) |
 | 서비스 | microk8s-llm.service (enabled) |
 
-사용자 `lanco`가 `microk8s` 그룹에 포함.
+사용자 `user`가 `microk8s` 그룹에 포함.
 `llmadmin` 그룹도 존재 → LLM 관련 Kubernetes 워크로드 운영 목적으로 추정.
 
 ## 5. 커스텀 서비스: file_monitor
@@ -46,7 +46,7 @@
 |------|-----|
 | 서비스 파일 | /etc/systemd/system/file_monitor.service |
 | 상태 | enabled |
-| 실행 경로 | /home/lanco/cursor/temp_git/dy_gh_watch_and_upload |
+| 실행 경로 | /home/user/projects/file-monitor |
 | 실행 | Python venv 기반 |
 
 ### 서비스 설정
@@ -58,9 +58,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=lanco
-Group=lanco
-WorkingDirectory=/home/lanco/cursor/temp_git/dy_gh_watch_and_upload
+User=user
+Group=user
+WorkingDirectory=/home/user/projects/file-monitor
 ExecStart=.../venv/bin/python .../src/main.py
 Restart=always
 RestartSec=5
@@ -119,6 +119,6 @@ RestartSec=5
 | 인터페이스 | 유형 | 드라이버 | IP | 상태 |
 |------------|------|---------|-----|------|
 | lo | Loopback | - | 127.0.0.1 | UP |
-| enp5s0 | Ethernet | r8169 | 172.30.31.2/24 | UP |
+| enp5s0 | Ethernet | r8169 | 192.168.1.100/24 | UP |
 | wlo1 | WiFi | iwlwifi | - | DOWN |
 | docker0 | Docker Bridge | bridge | 172.17.0.1/16 | UP |

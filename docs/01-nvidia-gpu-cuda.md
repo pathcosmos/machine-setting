@@ -5,11 +5,11 @@
 ## 1. GPU 하드웨어
 
 ```
-01:00.0 VGA compatible controller: NVIDIA Corporation Device 2c05 (rev a1)
-        Subsystem: PNY Device 143c
+01:00.0 VGA compatible controller: NVIDIA Corporation [RTX 5070] (rev a1)
+        Subsystem: PNY
 ```
 
-- **PCI ID**: 2c05 (RTX 5070 계열 추정)
+- **GPU**: RTX 5070 계열
 - **제조사**: PNY
 - **iGPU**: Intel AlderLake-S GT1 (i915 드라이버로 정상 작동 중)
 

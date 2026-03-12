@@ -352,6 +352,31 @@ Prompts for options at each stage (Python version, venv location, Node/Java inst
 ./setup.sh --venv /data/ai-env
 ```
 
+### Dry-Run Diagnostic
+
+```bash
+# Full system dry-run (all 7 stages)
+./setup.sh --dry-run
+make dry-run
+
+# Diagnose specific stage only
+./scripts/dry-run.sh --stage nvidia
+./scripts/dry-run.sh --stage python
+
+# Profile-based diagnostic
+./scripts/dry-run.sh --profile gpu-workstation
+
+# JSON output (for scripting)
+./scripts/dry-run.sh --json
+```
+
+Dry-run analyzes all 7 stages without installing anything:
+- Detects current installation state and versions
+- Plans install/upgrade/skip actions per component
+- Checks conflicts and compatibility (CUDA↔PyTorch, Python↔venv, etc.)
+- Reports disk usage and estimated install time
+- Returns exit code 1 if blocking issues are found
+
 ### Pre-flight & Planning
 
 ```bash
@@ -393,6 +418,7 @@ make preflight
 | `--node` / `--no-node` | Install/skip Node.js |
 | `--java` / `--no-java` | Install/skip Java |
 | `--profile <name>` | Use profile |
+| `--dry-run` | Full system dry-run diagnostic (all 7 stages) |
 | `--plan` | Run pre-flight check only |
 | `--preflight` | Pre-flight check then install |
 | `--resume` | Resume from failure point |
@@ -879,6 +905,7 @@ machine_setting/
 │   ├── install-node.sh         # NVM + Node.js
 │   ├── install-java.sh         # SDKMAN + Java
 │   ├── lib-checkpoint.sh       # Checkpoint/rollback library (7-stage)
+│   ├── dry-run.sh              # Full system dry-run diagnostic (all 7 stages)
 │   ├── preflight.sh            # Pre-flight system check (incl. NVIDIA)
 │   ├── doctor.sh               # Health check & recovery (incl. NVIDIA checks)
 │   ├── uninstall.sh            # Component uninstaller (incl. NVIDIA)

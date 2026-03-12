@@ -27,7 +27,7 @@
 |------|-----|
 | 버전 | v22.18.0 |
 | npm | 11.5.2 |
-| 경로 | /home/lanco/.nvm/versions/node/v22.18.0/bin/node |
+| 경로 | /home/user/.nvm/versions/node/v22.18.0/bin/node |
 | 설치 방법 | NVM (Node Version Manager) |
 
 ### NVM
@@ -57,12 +57,12 @@ deb [signed-by=/usr/share/keyrings/corretto-archive-keyring.gpg] \
 | 항목 | 값 |
 |------|-----|
 | 버전 | Apache Maven 3.9.4 |
-| 경로 | /home/lanco/maven/apache-maven-3.9.4 |
+| 경로 | /home/user/maven/apache-maven-3.9.4 |
 | 설치 방법 | 수동 설치 (PATH에 추가) |
 
 ```bash
 # PATH 설정
-/home/lanco/maven/apache-maven-3.9.4/bin
+/home/user/maven/apache-maven-3.9.4/bin
 ```
 
 ## 5. C/C++ Build Tools

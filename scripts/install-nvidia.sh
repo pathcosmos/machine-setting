@@ -267,21 +267,741 @@ if [ "$OPT_DRY_RUN" = false ]; then
     trap 'kill $SUDO_KEEPER_PID 2>/dev/null || true' EXIT
 fi
 
-# Dry run summary
+# ============================================================
+# Dry Run Diagnostic System
+# ============================================================
+
+# Color codes for dry-run report
+_C_RESET="\033[0m"
+_C_GREEN="\033[0;32m"
+_C_YELLOW="\033[0;33m"
+_C_RED="\033[0;31m"
+_C_CYAN="\033[0;36m"
+_C_BOLD="\033[1m"
+_C_DIM="\033[2m"
+
+_tag_ok()      { printf "  ${_C_GREEN}[OK]${_C_RESET}      %s\n" "$1"; }
+_tag_install() { printf "  ${_C_CYAN}[INSTALL]${_C_RESET} %s\n" "$1"; }
+_tag_upgrade() { printf "  ${_C_CYAN}[UPGRADE]${_C_RESET} %s\n" "$1"; }
+_tag_skip()    { printf "  ${_C_DIM}[SKIP]${_C_RESET}    %s\n" "$1"; }
+_tag_warn()    { printf "  ${_C_YELLOW}[WARN]${_C_RESET}    %s\n" "$1"; }
+_tag_fail()    { printf "  ${_C_RED}[FAIL]${_C_RESET}    %s\n" "$1"; }
+_tag_conflict(){ printf "  ${_C_RED}[CONFLICT]${_C_RESET}%s\n" " $1"; }
+_section()     { printf "\n${_C_BOLD}── %s ──${_C_RESET}\n" "$1"; }
+
+run_dry_run_diagnostic() {
+    local blocking_issues=0
+
+    echo ""
+    printf "${_C_BOLD}══════════════════════════════════════════════════════════${_C_RESET}\n"
+    printf "${_C_BOLD}  NVIDIA Stack Dry-Run Diagnostic Report${_C_RESET}\n"
+    printf "${_C_BOLD}══════════════════════════════════════════════════════════${_C_RESET}\n"
+
+    # ==================================================================
+    # 1. System Readiness Check
+    # ==================================================================
+    _section "1. System Readiness"
+
+    # OS detection
+    local os_id="" os_ver="" os_codename="" os_name=""
+    if [ -f /etc/os-release ]; then
+        os_id=$(. /etc/os-release && echo "${ID:-unknown}")
+        os_ver=$(. /etc/os-release && echo "${VERSION_ID:-unknown}")
+        os_codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-unknown}")
+        os_name=$(. /etc/os-release && echo "${PRETTY_NAME:-unknown}")
+    fi
+    case "$os_id" in
+        ubuntu|debian)
+            _tag_ok "OS: $os_name ($os_id $os_ver / $os_codename)" ;;
+        *)
+            _tag_fail "Unsupported OS: $os_name (need Ubuntu/Debian)"
+            blocking_issues=$((blocking_issues + 1)) ;;
+    esac
+
+    # Architecture
+    local arch
+    arch=$(uname -m)
+    if [ "$arch" = "x86_64" ]; then
+        _tag_ok "Architecture: $arch"
+    else
+        _tag_fail "Unsupported architecture: $arch (need x86_64)"
+        blocking_issues=$((blocking_issues + 1))
+    fi
+
+    # Disk space
+    local avail_mb needed_mb=6000
+    avail_mb=$(df -BM /usr 2>/dev/null | awk 'NR==2{gsub(/M/,"",$4); print $4}' || echo "0")
+    if [ "$OPT_ENTERPRISE" = true ]; then needed_mb=8000; fi
+    if [ "${avail_mb:-0}" -ge "$needed_mb" ]; then
+        _tag_ok "Disk space: ${avail_mb}MB available (need ~${needed_mb}MB)"
+    else
+        _tag_warn "Disk space: ${avail_mb}MB available, estimated ~${needed_mb}MB needed"
+    fi
+
+    # Internet connectivity to NVIDIA repos
+    local nvidia_reachable=false
+    if command -v wget &>/dev/null; then
+        if wget -q --spider --timeout=5 "https://developer.download.nvidia.com" 2>/dev/null; then
+            nvidia_reachable=true
+        fi
+    elif command -v curl &>/dev/null; then
+        if curl -fsSL --connect-timeout 5 -o /dev/null "https://developer.download.nvidia.com" 2>/dev/null; then
+            nvidia_reachable=true
+        fi
+    fi
+    if [ "$nvidia_reachable" = true ]; then
+        _tag_ok "Internet: NVIDIA repos reachable"
+    else
+        _tag_fail "Internet: Cannot reach developer.download.nvidia.com"
+        blocking_issues=$((blocking_issues + 1))
+    fi
+
+    # apt lock check
+    if fuser /var/lib/dpkg/lock-frontend &>/dev/null 2>&1 || fuser /var/lib/apt/lists/lock &>/dev/null 2>&1; then
+        _tag_fail "apt lock: Another package manager is running"
+        blocking_issues=$((blocking_issues + 1))
+    else
+        _tag_ok "apt lock: No package manager lock detected"
+    fi
+
+    # Kernel headers
+    local running_kernel
+    running_kernel=$(uname -r)
+    if dpkg -l "linux-headers-${running_kernel}" 2>/dev/null | grep -q '^ii'; then
+        _tag_ok "Kernel headers: linux-headers-${running_kernel} installed"
+    else
+        _tag_warn "Kernel headers: linux-headers-${running_kernel} NOT installed (needed for DKMS)"
+    fi
+
+    # ==================================================================
+    # 2. Current Installation State Detection
+    # ==================================================================
+    _section "2. Current Installation State"
+
+    # --- NVIDIA Driver ---
+    local cur_driver_ver="" driver_loaded=false nvidia_smi_ok=false
+    if command -v nvidia-smi &>/dev/null; then
+        nvidia_smi_ok=true
+        cur_driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
+    fi
+    if lsmod 2>/dev/null | grep -q '^nvidia '; then
+        driver_loaded=true
+    fi
+    local driver_pkg_ver=""
+    driver_pkg_ver=$(dpkg -l 'nvidia-driver-*' 2>/dev/null | grep '^ii' | head -1 | awk '{print $2 " (" $3 ")"}' || true)
+
+    printf "  %-22s" "NVIDIA Driver:"
+    if [ -n "$cur_driver_ver" ]; then
+        printf "installed (v%s)" "$cur_driver_ver"
+        [ "$driver_loaded" = true ] && printf ", module loaded" || printf ", module NOT loaded"
+        [ "$nvidia_smi_ok" = true ] && printf ", nvidia-smi OK" || printf ", nvidia-smi FAIL"
+        printf "\n"
+        [ -n "$driver_pkg_ver" ] && printf "  %-22s%s\n" "" "package: $driver_pkg_ver"
+    else
+        printf "not installed\n"
+    fi
+
+    # --- CUDA Toolkit ---
+    local cur_cuda_ver="" nvcc_path="" cuda_symlink_target=""
+    if command -v nvcc &>/dev/null; then
+        nvcc_path=$(command -v nvcc)
+        cur_cuda_ver=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+    elif [ -x /usr/local/cuda/bin/nvcc ]; then
+        nvcc_path="/usr/local/cuda/bin/nvcc"
+        cur_cuda_ver=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+    fi
+    if [ -L /usr/local/cuda ]; then
+        cuda_symlink_target=$(readlink -f /usr/local/cuda 2>/dev/null || true)
+    fi
+
+    printf "  %-22s" "CUDA Toolkit:"
+    if [ -n "$cur_cuda_ver" ]; then
+        printf "installed (v%s)" "$cur_cuda_ver"
+        [ -n "$nvcc_path" ] && printf ", nvcc: %s" "$nvcc_path"
+        printf "\n"
+        [ -n "$cuda_symlink_target" ] && printf "  %-22s/usr/local/cuda -> %s\n" "" "$cuda_symlink_target"
+    else
+        printf "not installed\n"
+    fi
+
+    # --- cuDNN ---
+    local cur_cudnn_ver="" cur_cudnn_pkg=""
+    cur_cudnn_pkg=$(dpkg -l 'cudnn9-*' 2>/dev/null | grep '^ii' | head -1 | awk '{print $2}' || true)
+    if [ -n "$cur_cudnn_pkg" ]; then
+        cur_cudnn_ver=$(dpkg -l "$cur_cudnn_pkg" 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+    fi
+    # Also check libcudnn
+    if [ -z "$cur_cudnn_pkg" ]; then
+        cur_cudnn_pkg=$(dpkg -l 'libcudnn*' 2>/dev/null | grep '^ii' | head -1 | awk '{print $2}' || true)
+        if [ -n "$cur_cudnn_pkg" ]; then
+            cur_cudnn_ver=$(dpkg -l "$cur_cudnn_pkg" 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+        fi
+    fi
+
+    printf "  %-22s" "cuDNN:"
+    if [ -n "$cur_cudnn_ver" ]; then
+        printf "installed (v%s, pkg: %s)\n" "$cur_cudnn_ver" "$cur_cudnn_pkg"
+    else
+        printf "not installed\n"
+    fi
+
+    # --- NCCL ---
+    local cur_nccl_ver=""
+    cur_nccl_ver=$(dpkg -l 'libnccl2' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+
+    printf "  %-22s" "NCCL:"
+    if [ -n "$cur_nccl_ver" ]; then
+        printf "installed (v%s)\n" "$cur_nccl_ver"
+    else
+        printf "not installed\n"
+    fi
+
+    # --- Container Toolkit ---
+    local ctk_installed=false docker_present=false
+    command -v nvidia-ctk &>/dev/null && ctk_installed=true
+    command -v docker &>/dev/null && docker_present=true
+
+    printf "  %-22s" "Container Toolkit:"
+    if [ "$ctk_installed" = true ]; then
+        printf "installed"
+    else
+        printf "not installed"
+    fi
+    if [ "$docker_present" = true ]; then
+        printf ", Docker present\n"
+    else
+        printf ", Docker NOT present\n"
+    fi
+
+    # --- Enterprise Tools ---
+    printf "  %-22s" "Enterprise Tools:"
+    local ent_parts=()
+    dpkg -l datacenter-gpu-manager 2>/dev/null | grep -q '^ii' && ent_parts+=("DCGM") || true
+    dpkg -l 'nvidia-fabricmanager*' 2>/dev/null | grep -q '^ii' && ent_parts+=("FabricMgr") || true
+    dpkg -l nvidia-gds 2>/dev/null | grep -q '^ii' && ent_parts+=("GDS") || true
+    dpkg -l nvidia-peermem 2>/dev/null | grep -q '^ii' && ent_parts+=("peermem") || true
+    if [ ${#ent_parts[@]} -gt 0 ]; then
+        local IFS=", "
+        printf "%s\n" "${ent_parts[*]}"
+    else
+        printf "none installed\n"
+    fi
+
+    # --- System Tools ---
+    printf "  %-22s" "System Tools:"
+    local sys_tools_list=("build-essential" "cmake" "ninja-build" "numactl" "hwloc" "nvtop" "lm-sensors" "fio")
+    local sys_installed=() sys_missing=()
+    for pkg in "${sys_tools_list[@]}"; do
+        if dpkg -l "$pkg" 2>/dev/null | grep -q '^ii'; then
+            sys_installed+=("$pkg")
+        else
+            sys_missing+=("$pkg")
+        fi
+    done
+    if [ ${#sys_installed[@]} -gt 0 ]; then
+        local IFS=", "
+        printf "installed: %s" "${sys_installed[*]}"
+    fi
+    if [ ${#sys_missing[@]} -gt 0 ]; then
+        local IFS=", "
+        [ ${#sys_installed[@]} -gt 0 ] && printf "\n  %-22s" ""
+        printf "missing: %s" "${sys_missing[*]}"
+    fi
+    printf "\n"
+
+    # --- Kernel Tuning ---
+    local sysctl_exists=false cur_max_map="" cur_memlock=""
+    [ -f /etc/sysctl.d/99-machine-setting-gpu.conf ] && sysctl_exists=true
+    cur_max_map=$(sysctl -n vm.max_map_count 2>/dev/null || echo "unknown")
+    cur_memlock=$(ulimit -l 2>/dev/null || echo "unknown")
+
+    printf "  %-22s" "Kernel Tuning:"
+    if [ "$sysctl_exists" = true ]; then
+        printf "sysctl file exists"
+    else
+        printf "sysctl file NOT present"
+    fi
+    printf ", vm.max_map_count=%s, memlock=%s\n" "$cur_max_map" "$cur_memlock"
+
+    # ==================================================================
+    # 3. Action Plan
+    # ==================================================================
+    _section "3. Action Plan"
+
+    # Driver
+    if [ "$OPT_DRIVER" = true ]; then
+        if [ -n "$cur_driver_ver" ]; then
+            if [ -n "$OPT_DRIVER_VERSION" ] && [ "$cur_driver_ver" != "$OPT_DRIVER_VERSION" ]; then
+                _tag_upgrade "NVIDIA Driver: $cur_driver_ver -> $OPT_DRIVER_VERSION (open=${USE_OPEN_KERNEL})"
+            else
+                _tag_ok "NVIDIA Driver: $cur_driver_ver already installed"
+            fi
+        else
+            _tag_install "NVIDIA Driver (${OPT_DRIVER_VERSION:-recommended}, open=${USE_OPEN_KERNEL})"
+        fi
+    else
+        _tag_skip "NVIDIA Driver (--no-driver)"
+    fi
+
+    # CUDA
+    if [ "$OPT_CUDA" = true ]; then
+        if [ -n "$cur_cuda_ver" ]; then
+            if [ -n "$OPT_CUDA_VERSION" ]; then
+                local requested_dotted="${OPT_CUDA_VERSION//-/.}"
+                if [ "$cur_cuda_ver" = "$requested_dotted" ]; then
+                    _tag_ok "CUDA Toolkit: $cur_cuda_ver already installed"
+                else
+                    _tag_upgrade "CUDA Toolkit: $cur_cuda_ver -> $requested_dotted"
+                fi
+            else
+                _tag_ok "CUDA Toolkit: $cur_cuda_ver already installed"
+            fi
+        else
+            _tag_install "CUDA Toolkit (${OPT_CUDA_VERSION:-latest})"
+        fi
+    else
+        _tag_skip "CUDA Toolkit (disabled)"
+    fi
+
+    # cuDNN
+    if [ "$OPT_CUDNN" = true ]; then
+        if [ -n "$cur_cudnn_ver" ]; then
+            _tag_ok "cuDNN: $cur_cudnn_ver already installed ($cur_cudnn_pkg)"
+        else
+            _tag_install "cuDNN 9.x"
+        fi
+    else
+        _tag_skip "cuDNN (disabled)"
+    fi
+
+    # NCCL
+    if [ "$OPT_NCCL" = true ]; then
+        if [ "${GPU_COUNT:-1}" -le 1 ] && [ "$GPU_TIER" != "datacenter" ]; then
+            _tag_skip "NCCL (single GPU, non-datacenter)"
+        elif [ -n "$cur_nccl_ver" ]; then
+            _tag_ok "NCCL: $cur_nccl_ver already installed"
+        else
+            _tag_install "NCCL (multi-GPU communication)"
+        fi
+    else
+        _tag_skip "NCCL (disabled)"
+    fi
+
+    # Enterprise
+    if [ "$OPT_ENTERPRISE" = true ]; then
+        local ent_install=()
+        dpkg -l datacenter-gpu-manager 2>/dev/null | grep -q '^ii' || ent_install+=("DCGM")
+        dpkg -l 'nvidia-fabricmanager*' 2>/dev/null | grep -q '^ii' || ent_install+=("FabricMgr")
+        dpkg -l nvidia-gds 2>/dev/null | grep -q '^ii' || ent_install+=("GDS")
+        dpkg -l nvidia-peermem 2>/dev/null | grep -q '^ii' || ent_install+=("peermem")
+        if [ ${#ent_install[@]} -gt 0 ]; then
+            local IFS=", "
+            _tag_install "Enterprise tools: ${ent_install[*]}"
+        else
+            _tag_ok "Enterprise tools: all already installed"
+        fi
+    else
+        _tag_skip "Enterprise tools (disabled)"
+    fi
+
+    # Container Toolkit
+    if [ "$OPT_CONTAINER_TOOLKIT" = true ]; then
+        if [ "$docker_present" = false ]; then
+            _tag_skip "Container Toolkit (Docker not installed)"
+        elif [ "$ctk_installed" = true ]; then
+            _tag_ok "Container Toolkit: already installed"
+        else
+            _tag_install "NVIDIA Container Toolkit"
+        fi
+    else
+        _tag_skip "Container Toolkit (disabled)"
+    fi
+
+    # System Tools
+    if [ "$OPT_SYSTEM_TOOLS" = true ]; then
+        if [ ${#sys_missing[@]} -gt 0 ]; then
+            local IFS=", "
+            _tag_install "System tools: ${sys_missing[*]}"
+        else
+            _tag_ok "System tools: all already installed"
+        fi
+    else
+        _tag_skip "System tools (disabled)"
+    fi
+
+    # Kernel Tuning
+    if [ "$OPT_KERNEL_TUNING" = true ]; then
+        if [ "$sysctl_exists" = true ]; then
+            _tag_ok "Kernel tuning: config already present"
+        else
+            _tag_install "Kernel/sysctl tuning (GPU optimizations)"
+        fi
+    else
+        _tag_skip "Kernel tuning (disabled)"
+    fi
+
+    # ==================================================================
+    # 4. Compatibility Matrix
+    # ==================================================================
+    _section "4. Compatibility Matrix"
+
+    # Driver <-> CUDA version compatibility
+    # CUDA 12.x needs driver >= 525, CUDA 13.x needs driver >= 560
+    if [ -n "$cur_driver_ver" ] && [ -n "$cur_cuda_ver" ]; then
+        local driver_major
+        driver_major=$(echo "$cur_driver_ver" | cut -d. -f1)
+        local cuda_major
+        cuda_major=$(echo "$cur_cuda_ver" | cut -d. -f1)
+        local compat_ok=true
+        if [ "$cuda_major" -ge 13 ] 2>/dev/null && [ "$driver_major" -lt 560 ] 2>/dev/null; then
+            _tag_fail "Driver $cur_driver_ver may be too old for CUDA $cur_cuda_ver (need >= 560.x)"
+            compat_ok=false
+            blocking_issues=$((blocking_issues + 1))
+        elif [ "$cuda_major" -ge 12 ] 2>/dev/null && [ "$driver_major" -lt 525 ] 2>/dev/null; then
+            _tag_fail "Driver $cur_driver_ver may be too old for CUDA $cur_cuda_ver (need >= 525.x)"
+            compat_ok=false
+            blocking_issues=$((blocking_issues + 1))
+        fi
+        if [ "$compat_ok" = true ]; then
+            _tag_ok "Driver $cur_driver_ver <-> CUDA $cur_cuda_ver compatibility"
+        fi
+    elif [ -n "$cur_driver_ver" ] || [ -n "$cur_cuda_ver" ]; then
+        _tag_ok "Partial stack present; compatibility will be validated on install"
+    else
+        _tag_ok "Fresh install; repo will provide compatible versions"
+    fi
+
+    # cuDNN <-> CUDA compatibility
+    if [ -n "$cur_cudnn_pkg" ] && [ -n "$cur_cuda_ver" ]; then
+        local cudnn_cuda_suffix=""
+        cudnn_cuda_suffix=$(echo "$cur_cudnn_pkg" | sed -n 's/.*cuda-\([0-9]*\).*/\1/p')
+        local cur_cuda_major
+        cur_cuda_major=$(echo "$cur_cuda_ver" | cut -d. -f1)
+        if [ -n "$cudnn_cuda_suffix" ] && [ "$cudnn_cuda_suffix" != "$cur_cuda_major" ]; then
+            _tag_warn "cuDNN package $cur_cudnn_pkg targets CUDA $cudnn_cuda_suffix but CUDA $cur_cuda_ver is installed"
+        else
+            _tag_ok "cuDNN <-> CUDA $cur_cuda_ver compatibility"
+        fi
+    fi
+
+    # GPU architecture <-> driver support
+    local gpu_name="${GPU_NAME:-}"
+    if [ -n "$gpu_name" ]; then
+        # Pre-Kepler GPUs (very old) not supported by modern drivers
+        case "$gpu_name" in
+            *GT?[2-6][0-9][0-9]*|*GTX?[2-6][0-9][0-9]*)
+                _tag_warn "GPU $gpu_name may be too old for latest drivers (pre-Maxwell)"
+                ;;
+            *)
+                _tag_ok "GPU $gpu_name supported by current drivers"
+                ;;
+        esac
+    fi
+
+    # Open kernel module support
+    if [ "$USE_OPEN_KERNEL" = true ]; then
+        if supports_open_kernel; then
+            _tag_ok "Open kernel modules supported (Turing+)"
+        else
+            _tag_warn "Open kernel modules requested but GPU may not support them (pre-Turing)"
+        fi
+    else
+        _tag_ok "Using proprietary kernel modules"
+    fi
+
+    # Secure Boot implications
+    if is_secure_boot; then
+        _tag_warn "Secure Boot enabled: MOK enrollment will be required after driver install"
+    else
+        _tag_ok "Secure Boot not enabled (no MOK enrollment needed)"
+    fi
+
+    # ==================================================================
+    # 5. Conflict & Overlap Detection
+    # ==================================================================
+    _section "5. Conflict & Overlap Detection"
+
+    local conflicts_found=0
+
+    # Check for manually installed NVIDIA packages vs repo
+    local manual_nvidia=""
+    manual_nvidia=$(dpkg -l 'nvidia-*' 2>/dev/null | grep '^ii' | grep -v "$(get_repo_arch_string)" | awk '{print $2}' | head -5 || true)
+    # Check for PPA sources conflicting with official repo
+    local ppa_nvidia=""
+    ppa_nvidia=$(grep -rl 'ppa.*nvidia\|graphics-drivers' /etc/apt/sources.list.d/ 2>/dev/null | head -3 || true)
+    if [ -n "$ppa_nvidia" ]; then
+        _tag_conflict "PPA sources found that may conflict with official NVIDIA repo:"
+        for ppa in $ppa_nvidia; do
+            printf "  %-22s%s\n" "" "$ppa"
+        done
+        conflicts_found=$((conflicts_found + 1))
+    else
+        _tag_ok "No conflicting PPA sources detected"
+    fi
+
+    # Multiple CUDA versions
+    local cuda_dirs=""
+    cuda_dirs=$(ls -d /usr/local/cuda-* 2>/dev/null | sort -V || true)
+    local cuda_count=0
+    if [ -n "$cuda_dirs" ]; then
+        cuda_count=$(echo "$cuda_dirs" | wc -l)
+    fi
+    if [ "$cuda_count" -gt 1 ]; then
+        _tag_warn "Multiple CUDA versions detected:"
+        for d in $cuda_dirs; do
+            printf "  %-22s%s\n" "" "$d"
+        done
+    elif [ "$cuda_count" -eq 1 ]; then
+        _tag_ok "Single CUDA installation: $cuda_dirs"
+    else
+        _tag_ok "No existing CUDA installations in /usr/local/"
+    fi
+
+    # Broken /usr/local/cuda symlink
+    if [ -L /usr/local/cuda ]; then
+        if [ ! -e /usr/local/cuda ]; then
+            _tag_conflict "Broken symlink: /usr/local/cuda -> $(readlink /usr/local/cuda 2>/dev/null)"
+            conflicts_found=$((conflicts_found + 1))
+        else
+            _tag_ok "/usr/local/cuda symlink OK -> $(readlink -f /usr/local/cuda 2>/dev/null)"
+        fi
+    elif [ -d /usr/local/cuda ]; then
+        _tag_warn "/usr/local/cuda is a directory (not a symlink) — may cause issues"
+    else
+        _tag_ok "No /usr/local/cuda symlink (will be created on install)"
+    fi
+
+    # Leftover config files from previous installs
+    local leftover_configs=()
+    [ -f /etc/apt/sources.list.d/cuda-ubuntu*.list ] 2>/dev/null && leftover_configs+=("/etc/apt/sources.list.d/cuda-*.list")
+    for f in /etc/modprobe.d/nvidia*.conf /etc/modprobe.d/blacklist-nvidia*.conf; do
+        [ -f "$f" ] && leftover_configs+=("$f")
+    done
+    if [ ${#leftover_configs[@]} -gt 0 ]; then
+        _tag_warn "Leftover config files detected:"
+        for f in "${leftover_configs[@]}"; do
+            printf "  %-22s%s\n" "" "$f"
+        done
+    else
+        _tag_ok "No leftover config files detected"
+    fi
+
+    if [ "$conflicts_found" -gt 0 ]; then
+        _tag_warn "$conflicts_found conflict(s) found — consider --uninstall before proceeding"
+    fi
+
+    # ==================================================================
+    # 6. Risk Assessment & Warnings
+    # ==================================================================
+    _section "6. Risk Assessment"
+
+    # Reboot required?
+    local reboot_needed=false
+    if [ "$OPT_DRIVER" = true ]; then
+        if [ -z "$cur_driver_ver" ]; then
+            _tag_warn "Reboot REQUIRED after driver installation"
+            reboot_needed=true
+        elif [ -n "$OPT_DRIVER_VERSION" ] && [ "$cur_driver_ver" != "$OPT_DRIVER_VERSION" ]; then
+            _tag_warn "Reboot REQUIRED after driver upgrade"
+            reboot_needed=true
+        fi
+    fi
+    if [ "$reboot_needed" = false ]; then
+        _tag_ok "No reboot expected"
+    fi
+
+    # Secure Boot MOK
+    if is_secure_boot && [ "$OPT_DRIVER" = true ]; then
+        _tag_warn "Secure Boot: MOK enrollment step required at reboot"
+    fi
+
+    # Kernel module conflicts
+    if lsmod 2>/dev/null | grep -q '^nouveau '; then
+        _tag_warn "nouveau module loaded — will be blacklisted during driver install"
+    else
+        _tag_ok "No conflicting nouveau module loaded"
+    fi
+
+    # Running GPU processes
+    if [ "$nvidia_smi_ok" = true ]; then
+        local gpu_procs=""
+        gpu_procs=$(nvidia-smi --query-compute-apps=pid,name --format=csv,noheader 2>/dev/null || true)
+        if [ -n "$gpu_procs" ]; then
+            _tag_warn "Active GPU processes (will be interrupted by driver changes):"
+            echo "$gpu_procs" | while IFS= read -r line; do
+                printf "  %-22s%s\n" "" "$line"
+            done
+        else
+            _tag_ok "No active GPU compute processes"
+        fi
+    fi
+
+    # Estimated installation time
+    local est_time="5-10 minutes"
+    if [ "$OPT_ENTERPRISE" = true ]; then est_time="10-20 minutes"; fi
+    if [ -z "$cur_driver_ver" ] && [ "$OPT_DRIVER" = true ]; then est_time="10-25 minutes (includes driver DKMS build)"; fi
+    _tag_ok "Estimated installation time: $est_time"
+
+    # ==================================================================
+    # 7. Summary Report
+    # ==================================================================
+    _section "7. Summary"
+
+    printf "\n"
+    printf "  %-24s %s\n" "GPU:" "${GPU_NAME:-Unknown} (${GPU_COUNT:-1}x, tier: ${GPU_TIER})"
+    printf "  %-24s %s\n" "OS:" "${os_name:-Unknown}"
+    printf "  %-24s %s\n" "Kernel:" "$(uname -r)"
+    printf "  %-24s %s\n" "Open kernel modules:" "$USE_OPEN_KERNEL"
+    printf "\n"
+
+    # Build summary table
+    printf "  ${_C_BOLD}%-24s %-14s %s${_C_RESET}\n" "Component" "Status" "Detail"
+    printf "  %-24s %-14s %s\n" "────────────────────────" "──────────────" "──────────────────────"
+
+    # Helper to print one summary row
+    _summary_row() {
+        local component="$1" status="$2" detail="$3"
+        local color=""
+        case "$status" in
+            OK)       color="$_C_GREEN" ;;
+            INSTALL)  color="$_C_CYAN" ;;
+            UPGRADE)  color="$_C_CYAN" ;;
+            SKIP)     color="$_C_DIM" ;;
+            WARN)     color="$_C_YELLOW" ;;
+            FAIL)     color="$_C_RED" ;;
+        esac
+        printf "  %-24s ${color}%-14s${_C_RESET} %s\n" "$component" "[$status]" "$detail"
+    }
+
+    # Driver row
+    if [ "$OPT_DRIVER" = true ]; then
+        if [ -n "$cur_driver_ver" ]; then
+            if [ -n "$OPT_DRIVER_VERSION" ] && [ "$cur_driver_ver" != "$OPT_DRIVER_VERSION" ]; then
+                _summary_row "NVIDIA Driver" "UPGRADE" "$cur_driver_ver -> $OPT_DRIVER_VERSION"
+            else
+                _summary_row "NVIDIA Driver" "OK" "v$cur_driver_ver"
+            fi
+        else
+            _summary_row "NVIDIA Driver" "INSTALL" "${OPT_DRIVER_VERSION:-recommended}"
+        fi
+    else
+        _summary_row "NVIDIA Driver" "SKIP" "--no-driver"
+    fi
+
+    # CUDA row
+    if [ "$OPT_CUDA" = true ]; then
+        if [ -n "$cur_cuda_ver" ]; then
+            if [ -n "$OPT_CUDA_VERSION" ]; then
+                local req="${OPT_CUDA_VERSION//-/.}"
+                if [ "$cur_cuda_ver" = "$req" ]; then
+                    _summary_row "CUDA Toolkit" "OK" "v$cur_cuda_ver"
+                else
+                    _summary_row "CUDA Toolkit" "UPGRADE" "$cur_cuda_ver -> $req"
+                fi
+            else
+                _summary_row "CUDA Toolkit" "OK" "v$cur_cuda_ver"
+            fi
+        else
+            _summary_row "CUDA Toolkit" "INSTALL" "${OPT_CUDA_VERSION:-latest}"
+        fi
+    else
+        _summary_row "CUDA Toolkit" "SKIP" "disabled"
+    fi
+
+    # cuDNN row
+    if [ "$OPT_CUDNN" = true ]; then
+        if [ -n "$cur_cudnn_ver" ]; then
+            _summary_row "cuDNN" "OK" "v$cur_cudnn_ver"
+        else
+            _summary_row "cuDNN" "INSTALL" "9.x"
+        fi
+    else
+        _summary_row "cuDNN" "SKIP" "disabled"
+    fi
+
+    # NCCL row
+    if [ "$OPT_NCCL" = true ]; then
+        if [ "${GPU_COUNT:-1}" -le 1 ] && [ "$GPU_TIER" != "datacenter" ]; then
+            _summary_row "NCCL" "SKIP" "single GPU"
+        elif [ -n "$cur_nccl_ver" ]; then
+            _summary_row "NCCL" "OK" "v$cur_nccl_ver"
+        else
+            _summary_row "NCCL" "INSTALL" "multi-GPU comms"
+        fi
+    else
+        _summary_row "NCCL" "SKIP" "disabled"
+    fi
+
+    # Enterprise row
+    if [ "$OPT_ENTERPRISE" = true ]; then
+        if [ ${#ent_parts[@]} -ge 4 ]; then
+            _summary_row "Enterprise Tools" "OK" "all present"
+        elif [ ${#ent_parts[@]} -gt 0 ]; then
+            local IFS=", "
+            _summary_row "Enterprise Tools" "INSTALL" "partial: have ${ent_parts[*]}"
+        else
+            _summary_row "Enterprise Tools" "INSTALL" "DCGM, FabricMgr, GDS, peermem"
+        fi
+    else
+        _summary_row "Enterprise Tools" "SKIP" "disabled"
+    fi
+
+    # Container Toolkit row
+    if [ "$OPT_CONTAINER_TOOLKIT" = true ]; then
+        if [ "$docker_present" = false ]; then
+            _summary_row "Container Toolkit" "SKIP" "no Docker"
+        elif [ "$ctk_installed" = true ]; then
+            _summary_row "Container Toolkit" "OK" "installed"
+        else
+            _summary_row "Container Toolkit" "INSTALL" "nvidia-ctk"
+        fi
+    else
+        _summary_row "Container Toolkit" "SKIP" "disabled"
+    fi
+
+    # System Tools row
+    if [ "$OPT_SYSTEM_TOOLS" = true ]; then
+        if [ ${#sys_missing[@]} -eq 0 ]; then
+            _summary_row "System Tools" "OK" "all present"
+        else
+            _summary_row "System Tools" "INSTALL" "${#sys_missing[@]} packages"
+        fi
+    else
+        _summary_row "System Tools" "SKIP" "disabled"
+    fi
+
+    # Kernel Tuning row
+    if [ "$OPT_KERNEL_TUNING" = true ]; then
+        if [ "$sysctl_exists" = true ]; then
+            _summary_row "Kernel Tuning" "OK" "config present"
+        else
+            _summary_row "Kernel Tuning" "INSTALL" "sysctl + limits"
+        fi
+    else
+        _summary_row "Kernel Tuning" "SKIP" "disabled"
+    fi
+
+    printf "\n"
+
+    # Final verdict
+    if [ "$blocking_issues" -gt 0 ]; then
+        printf "  ${_C_RED}${_C_BOLD}RESULT: %d blocking issue(s) found — installation would FAIL${_C_RESET}\n" "$blocking_issues"
+        printf "  Resolve the [FAIL] items above before proceeding.\n"
+    else
+        printf "  ${_C_GREEN}${_C_BOLD}RESULT: All checks passed — installation can proceed${_C_RESET}\n"
+    fi
+    printf "\n"
+
+    return "$blocking_issues"
+}
+
+# Run dry-run diagnostic and exit
 if [ "$OPT_DRY_RUN" = true ]; then
-    echo ""
-    echo "  Dry run — would install:"
-    [ "$OPT_DRIVER" = true ]            && echo "    - NVIDIA Driver (${OPT_DRIVER_VERSION:-recommended}, open=${USE_OPEN_KERNEL})"
-    [ "$OPT_CUDA" = true ]              && echo "    - CUDA Toolkit (${OPT_CUDA_VERSION:-latest})"
-    [ "$OPT_CUDNN" = true ]             && echo "    - cuDNN 9.x"
-    [ "$OPT_NCCL" = true ]              && echo "    - NCCL (multi-GPU communication)"
-    [ "$OPT_ENTERPRISE" = true ]        && echo "    - Enterprise: DCGM, Fabric Manager, GDS, nvidia-peermem"
-    [ "$OPT_CONTAINER_TOOLKIT" = true ] && echo "    - NVIDIA Container Toolkit"
-    [ "$OPT_SYSTEM_TOOLS" = true ]      && echo "    - System tools: numactl, hwloc, lm-sensors, nvtop, build-essential, cmake"
-    [ "$OPT_KERNEL_TUNING" = true ]     && echo "    - Kernel/sysctl tuning"
-    echo ""
-    echo "  GPU tier: ${GPU_TIER}"
-    echo "  Multi-GPU: ${GPU_COUNT:-1}x"
+    run_dry_run_diagnostic
+    exit_code=$?
+    if [ "$exit_code" -gt 0 ]; then
+        exit 1
+    fi
     exit 0
 fi
 

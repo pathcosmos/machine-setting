@@ -12,7 +12,7 @@
 - GPU PCI 장치에 `Kernel driver in use` 항목 없음
 
 **환경**:
-- GPU: NVIDIA Device 2c05 (PNY, RTX 5070 계열 추정)
+- GPU: NVIDIA RTX 5070 (PNY)
 - 드라이버: nvidia-driver-590-open v590.48.01 (설치됨)
 - DKMS: 3개 커널 버전에 빌드 완료
 - Secure Boot: **Enabled**

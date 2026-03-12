@@ -7,7 +7,7 @@
 | 항목 | 값 |
 |------|-----|
 | 버전 | 2.1.63 |
-| 경로 | /home/lanco/.local/bin/claude |
+| 경로 | /home/user/.local/bin/claude |
 | 설정 디렉토리 | ~/.claude/ |
 
 ### 설정 파일

@@ -352,6 +352,31 @@ make recover           # Auto-recover broken components
 ./setup.sh --venv /data/ai-env
 ```
 
+### Dry-Run 진단
+
+```bash
+# 전체 시스템 dry-run (7개 전 단계 진단)
+./setup.sh --dry-run
+make dry-run
+
+# 특정 단계만 진단
+./scripts/dry-run.sh --stage nvidia
+./scripts/dry-run.sh --stage python
+
+# 프로필 기반 진단
+./scripts/dry-run.sh --profile gpu-workstation
+
+# JSON 출력 (스크립팅용)
+./scripts/dry-run.sh --json
+```
+
+Dry-run은 실제 설치 없이 7개 전 단계를 분석합니다:
+- 현재 설치 상태 및 버전 감지
+- 설치/업그레이드/스킵 액션 플랜
+- 충돌 및 호환성 검사 (CUDA↔PyTorch, Python↔venv 등)
+- 디스크 사용량 및 예상 설치 시간
+- 차단 이슈 발견 시 exit code 1 반환
+
 ### Pre-flight & Planning
 
 ```bash
@@ -393,6 +418,7 @@ make preflight
 | `--node` / `--no-node` | Node.js 설치/미설치 |
 | `--java` / `--no-java` | Java 설치/미설치 |
 | `--profile <name>` | 프로필 사용 |
+| `--dry-run` | 전체 시스템 dry-run 진단 (7단계) |
 | `--plan` | Pre-flight check만 실행 |
 | `--preflight` | Pre-flight check 후 설치 |
 | `--resume` | 실패 지점부터 재개 |
@@ -879,6 +905,7 @@ machine_setting/
 │   ├── install-node.sh         # NVM + Node.js
 │   ├── install-java.sh         # SDKMAN + Java
 │   ├── lib-checkpoint.sh       # Checkpoint/rollback library (7-stage)
+│   ├── dry-run.sh              # 전체 시스템 dry-run 진단 (7단계)
 │   ├── preflight.sh            # Pre-flight system check (NVIDIA 포함)
 │   ├── doctor.sh               # Health check & recovery (NVIDIA 체크 포함)
 │   ├── uninstall.sh            # Component uninstaller (NVIDIA 포함)

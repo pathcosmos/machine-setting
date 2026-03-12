@@ -59,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         --java)         OPT_JAVA=true; INTERACTIVE=false; shift ;;
         --no-java)      OPT_JAVA=false; INTERACTIVE=false; shift ;;
         --profile)      PROFILE="$2"; INTERACTIVE=false; shift 2 ;;
+        --dry-run)      shift; exec bash "$SCRIPT_DIR/scripts/dry-run.sh" "$@" ;;
         --plan)         exec bash "$SCRIPT_DIR/scripts/preflight.sh" --check-only ;;
         --preflight)    OPT_PREFLIGHT="run"; shift ;;
         --resume)       OPT_RESUME=true; shift ;;
@@ -79,7 +80,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-java         Skip Java"
             echo "  --profile <name>  Use profile (gpu-workstation, cpu-server, mac-apple-silicon, laptop, minimal)"
             echo ""
-            echo "Pre-flight options:"
+            echo "Diagnostic options:"
+            echo "  --dry-run         Full system dry-run diagnostic (all 7 stages)"
             echo "  --plan            Pre-flight check only (show what would happen)"
             echo "  --preflight       Pre-flight check, then install selected items"
             echo ""
