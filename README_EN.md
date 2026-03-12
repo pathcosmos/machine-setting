@@ -24,6 +24,7 @@ Portable AI development environment system. One command to set up Python + AI/ML
 - [Uninstall](#uninstall)
 - [Health Check & Recovery](#health-check--recovery)
 - [Cross-Machine Sync](#cross-machine-sync)
+- [Disk Health & Monitoring](#disk-health--monitoring)
 - [Shell Integration Details](#shell-integration-details)
 - [Directory Structure](#directory-structure)
 - [State & Configuration Files](#state--configuration-files)
@@ -221,11 +222,28 @@ This block loads the following shell modules in order:
 | File | Role |
 |------|------|
 | `00-path.sh` | PATH setup (CUDA, Homebrew, uv, Maven) |
-| `10-aliases.sh` | Common aliases |
+| `10-aliases.sh` | Common aliases (see table below) |
 | `20-env.sh` | Environment variables |
 | `30-nvm.sh` | NVM lazy loader (loads on first `node`/`npm` call) |
 | `40-sdkman.sh` | SDKMAN lazy loader |
 | `50-ai-env.sh` | `aienv` / `aienv-off` functions + background update check |
+
+#### Shell Aliases (`10-aliases.sh`)
+
+| Alias | Command | Purpose |
+|-------|---------|---------|
+| `py` | `python3` | Run Python |
+| `pip` | `pip3` | Run pip |
+| `ipy` | `ipython` | IPython |
+| `gs` | `git status` | Git status |
+| `gd` | `git diff` | Git diff |
+| `gl` | `git log --oneline -20` | Recent 20 commits |
+| `gp` | `git pull --rebase` | Git pull |
+| `ms` | `cd ~/machine_setting` | Jump to repo |
+| `mss` | `make status` | Sync status |
+| `msu` | `make update` | Update |
+| `msp` | `make push` | Push |
+| `gpustat` | `nvidia-smi --query-gpu=...` | GPU status (Linux: nvidia-smi, macOS: ioreg) |
 
 ---
 
@@ -292,6 +310,30 @@ make export            # Export current venv to requirements files
 make doctor            # Full health check
 make recover           # Auto-recover broken components
 ```
+
+### All Make Targets
+
+| Target | Description |
+|--------|-------------|
+| `make setup` | Full bootstrap install |
+| `make plan` | Pre-flight check (plan only) |
+| `make preflight` | Pre-flight check then install |
+| `make dry-run` | Full system dry-run diagnostic (all 7 stages) |
+| `make check` | Verify AI environment (GPU, packages) |
+| `make update` | Pull from remote + notify of changes |
+| `make push` | Export packages + commit + push |
+| `make status` | Show sync status |
+| `make export` | Export venv to requirements files |
+| `make venv` | Create/update venv |
+| `make venv-local` | Create project-local venv |
+| `make detect` | Run hardware detection |
+| `make secrets` | Scan for secret leaks |
+| `make doctor` | Health check |
+| `make recover` | Auto-recover broken components |
+| `make verify` | Verify package integrity |
+| `make uninstall` | Interactive uninstall |
+| `make uninstall-dry` | Preview what would be removed |
+| `make reset` | Reset state and start from scratch |
 
 ### `aienv` Details
 
@@ -387,6 +429,11 @@ make plan
 # Pre-flight check then selective install
 ./setup.sh --preflight
 make preflight
+
+# Direct execution (additional options)
+./scripts/preflight.sh --check-only       # Status check only (= --plan)
+./scripts/preflight.sh --quiet            # Non-interactive (write plan file and exit)
+./scripts/preflight.sh --profile gpu-workstation  # Check against specific profile
 ```
 
 ### Resume & Recovery
@@ -475,8 +522,22 @@ Stage [2/7] automatically installs the following system-level NVIDIA software:
 ./scripts/install-nvidia.sh --driver-only      # Driver only
 ./scripts/install-nvidia.sh --no-driver        # Skip driver (CUDA/cuDNN/NCCL only)
 ./scripts/install-nvidia.sh --enterprise       # Include enterprise tools
-./scripts/install-nvidia.sh --dry-run          # Preview installation
+./scripts/install-nvidia.sh --dry-run          # Preview installation (deep diagnostic)
 ./scripts/install-nvidia.sh --uninstall        # Remove entire NVIDIA stack
+
+# Fine-grained component selection
+./scripts/install-nvidia.sh --no-cuda          # Skip CUDA (also skips cuDNN/NCCL)
+./scripts/install-nvidia.sh --no-cudnn         # Skip cuDNN only
+./scripts/install-nvidia.sh --no-nccl          # Skip NCCL only
+./scripts/install-nvidia.sh --no-container-toolkit  # Skip Docker GPU support
+./scripts/install-nvidia.sh --no-system-tools  # Skip system utilities
+./scripts/install-nvidia.sh --no-kernel-tuning # Skip kernel/sysctl tuning
+
+# Version pinning
+./scripts/install-nvidia.sh --driver-version 570  # Specific driver version
+./scripts/install-nvidia.sh --cuda-version 13-0   # Specific CUDA version
+./scripts/install-nvidia.sh --open-kernel          # Force open kernel modules
+./scripts/install-nvidia.sh --proprietary          # Force proprietary kernel modules
 ```
 
 **NVIDIA configuration options** (`config/default.conf` or `config/machine.conf`):
@@ -593,8 +654,12 @@ This resets the `~/.machine_setting/install.state` file and re-runs all stages f
 rm -rf ~/ai-env
 make venv
 
-# Or run script directly
+# Or run script directly (full options)
 scripts/setup-venv.sh --global --python 3.12
+scripts/setup-venv.sh --local                  # Project-local .venv
+scripts/setup-venv.sh --path /custom/path      # Custom path
+scripts/setup-venv.sh --profile gpu-workstation # Specific profile
+scripts/setup-venv.sh --nv-link                # NGC container (symlink system packages)
 ```
 
 ### Update Packages Only
@@ -841,6 +906,38 @@ Classifies and exports current venv packages to category-specific requirements f
 
 ---
 
+## Disk Health & Monitoring
+
+Utility scripts for checking NAS/server disk health. All scripts are **read-only** (no data modification) and require `smartmontools` and `e2fsprogs`.
+
+```bash
+# Collect SMART details (all disks)
+sudo ./scripts/disk-check-smart.sh [output-dir]
+
+# Start SMART Extended Self-Test (parallel, takes hours)
+sudo ./scripts/disk-check-smart-long.sh
+
+# Bad sector scan (parallel read-only, takes hours to days)
+sudo ./scripts/disk-check-badblocks.sh [output-dir]
+
+# Monitor bad sector scan progress
+./scripts/disk-check-progress.sh [output-dir]
+watch -n 60 ./scripts/disk-check-progress.sh    # Auto-refresh every minute
+
+# Convert .badblocks file to 512-byte sector ranges (for partition planning)
+./scripts/disk-badblocks-to-sectors.sh <disk.badblocks> [sector-margin]
+```
+
+| Script | Purpose | sudo |
+|--------|---------|------|
+| `disk-check-smart.sh` | SMART detail collection + summary (Health, Reallocated, Pending) | Yes |
+| `disk-check-smart-long.sh` | SMART Extended Self-Test (parallel) | Yes |
+| `disk-check-badblocks.sh` | Parallel read-only bad sector scan | Yes |
+| `disk-check-progress.sh` | Parse and display bad sector scan progress | No |
+| `disk-badblocks-to-sectors.sh` | Convert badblocks output to sector ranges | No |
+
+---
+
 ## Shell Integration Details
 
 ### Lazy Loading
@@ -912,7 +1009,12 @@ machine_setting/
 │   ├── sync.sh                 # Git sync (push/pull/status)
 │   ├── export-packages.sh      # venv -> requirements export
 │   ├── check-env.sh            # AI environment verification
-│   └── check-secrets.sh        # Secret leak scanner
+│   ├── check-secrets.sh        # Secret leak scanner
+│   ├── disk-check-smart.sh    # SMART detail collection
+│   ├── disk-check-smart-long.sh # SMART Extended Self-Test
+│   ├── disk-check-badblocks.sh  # Parallel bad sector scan
+│   ├── disk-check-progress.sh   # Bad sector scan progress monitor
+│   └── disk-badblocks-to-sectors.sh # badblocks to sector range converter
 ├── shell/
 │   ├── install-shell.sh        # Shell RC installer
 │   └── bashrc.d/               # Modular shell config (bash + zsh)
@@ -943,7 +1045,7 @@ machine_setting/
 | File | Location | Purpose |
 |------|----------|---------|
 | `install.state` | `~/.machine_setting/` | 7-stage install progress (STAGE_1~7) |
-| `backups/` | `~/.machine_setting/backups/` | .bashrc/.zshrc backups (timestamped) |
+| `backups/` | `~/.machine_setting/backups/` | .bashrc/.zshrc auto-backups (created on shell integration install/update, timestamped) |
 | `.machine_setting_profile` | `~/` | Hardware detection results |
 | `.last-update-check` | In repository | Last update check timestamp |
 | `.preflight_plan` | `env/` | Pre-flight plan (temporary, deleted after install) |

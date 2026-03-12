@@ -24,6 +24,7 @@ Portable AI development environment system. One command to set up Python + AI/ML
 - [Uninstall](#uninstall)
 - [Health Check & Recovery](#health-check--recovery)
 - [Cross-Machine Sync](#cross-machine-sync)
+- [Disk Health & Monitoring](#disk-health--monitoring)
 - [Shell Integration Details](#shell-integration-details)
 - [Directory Structure](#directory-structure)
 - [State & Configuration Files](#state--configuration-files)
@@ -221,11 +222,28 @@ done
 | 파일 | 역할 |
 |------|------|
 | `00-path.sh` | PATH 설정 (CUDA, Homebrew, uv, Maven) |
-| `10-aliases.sh` | 공통 aliases |
+| `10-aliases.sh` | 공통 별칭 (아래 표 참조) |
 | `20-env.sh` | 환경변수 설정 |
 | `30-nvm.sh` | NVM lazy loader (`node`/`npm` 최초 실행 시 로드) |
 | `40-sdkman.sh` | SDKMAN lazy loader |
 | `50-ai-env.sh` | `aienv` / `aienv-off` 함수 + 백그라운드 업데이트 체크 |
+
+#### 쉘 별칭 목록 (`10-aliases.sh`)
+
+| 별칭 | 명령 | 용도 |
+|------|------|------|
+| `py` | `python3` | Python 실행 |
+| `pip` | `pip3` | pip 실행 |
+| `ipy` | `ipython` | IPython |
+| `gs` | `git status` | Git 상태 |
+| `gd` | `git diff` | Git 변경사항 |
+| `gl` | `git log --oneline -20` | 최근 커밋 20개 |
+| `gp` | `git pull --rebase` | Git pull |
+| `ms` | `cd ~/machine_setting` | 저장소 이동 |
+| `mss` | `make status` | 동기화 상태 |
+| `msu` | `make update` | 업데이트 |
+| `msp` | `make push` | 푸시 |
+| `gpustat` | `nvidia-smi --query-gpu=...` | GPU 상태 (Linux: nvidia-smi, macOS: ioreg) |
 
 ---
 
@@ -292,6 +310,30 @@ make export            # Export current venv to requirements files
 make doctor            # Full health check
 make recover           # Auto-recover broken components
 ```
+
+### 전체 Make 타겟
+
+| 타겟 | 설명 |
+|------|------|
+| `make setup` | 전체 부트스트랩 설치 |
+| `make plan` | Pre-flight check (설치 계획만) |
+| `make preflight` | Pre-flight check 후 설치 |
+| `make dry-run` | 전체 시스템 dry-run 진단 (7단계) |
+| `make check` | AI 환경 검증 (GPU, 패키지) |
+| `make update` | 리모트에서 pull + 변경사항 알림 |
+| `make push` | 패키지 export + commit + push |
+| `make status` | 동기화 상태 확인 |
+| `make export` | venv → requirements 파일 export |
+| `make venv` | venv 생성/업데이트 |
+| `make venv-local` | 프로젝트 로컬 venv 생성 |
+| `make detect` | 하드웨어 감지 실행 |
+| `make secrets` | 시크릿 누출 스캔 |
+| `make doctor` | 건강 체크 |
+| `make recover` | 자동 복구 |
+| `make verify` | 패키지 무결성 검증 |
+| `make uninstall` | 대화형 삭제 |
+| `make uninstall-dry` | 삭제 미리보기 |
+| `make reset` | 상태 초기화 후 처음부터 |
 
 ### `aienv` 동작 상세
 
@@ -387,6 +429,11 @@ make plan
 # Pre-flight check 후 선택적 설치
 ./setup.sh --preflight
 make preflight
+
+# 직접 실행 (추가 옵션)
+./scripts/preflight.sh --check-only       # 상태 확인만 (= --plan)
+./scripts/preflight.sh --quiet            # 비대화형 (계획 파일 작성 후 종료)
+./scripts/preflight.sh --profile gpu-workstation  # 특정 프로필 기준 검사
 ```
 
 ### Resume & Recovery
@@ -475,8 +522,22 @@ cp config/machine.conf.example config/machine.conf
 ./scripts/install-nvidia.sh --driver-only      # 드라이버만
 ./scripts/install-nvidia.sh --no-driver        # 드라이버 제외 (CUDA/cuDNN/NCCL만)
 ./scripts/install-nvidia.sh --enterprise       # 엔터프라이즈 도구 포함
-./scripts/install-nvidia.sh --dry-run          # 설치 미리보기
+./scripts/install-nvidia.sh --dry-run          # 설치 미리보기 (심층 진단)
 ./scripts/install-nvidia.sh --uninstall        # NVIDIA 스택 전체 제거
+
+# 세부 선택 설치
+./scripts/install-nvidia.sh --no-cuda          # CUDA 제외 (cuDNN/NCCL도 제외)
+./scripts/install-nvidia.sh --no-cudnn         # cuDNN만 제외
+./scripts/install-nvidia.sh --no-nccl          # NCCL만 제외
+./scripts/install-nvidia.sh --no-container-toolkit  # Docker GPU 지원 제외
+./scripts/install-nvidia.sh --no-system-tools  # 시스템 유틸리티 제외
+./scripts/install-nvidia.sh --no-kernel-tuning # 커널/sysctl 최적화 제외
+
+# 버전 지정
+./scripts/install-nvidia.sh --driver-version 570  # 드라이버 버전 지정
+./scripts/install-nvidia.sh --cuda-version 13-0   # CUDA 버전 지정
+./scripts/install-nvidia.sh --open-kernel          # open 커널 모듈 강제
+./scripts/install-nvidia.sh --proprietary          # proprietary 커널 모듈 강제
 ```
 
 **NVIDIA 설정 옵션** (`config/default.conf` 또는 `config/machine.conf`):
@@ -593,8 +654,12 @@ make reset
 rm -rf ~/ai-env
 make venv
 
-# 또는 스크립트 직접 실행
+# 또는 스크립트 직접 실행 (전체 옵션)
 scripts/setup-venv.sh --global --python 3.12
+scripts/setup-venv.sh --local                  # 프로젝트 로컬 .venv
+scripts/setup-venv.sh --path /custom/path      # 커스텀 경로
+scripts/setup-venv.sh --profile gpu-workstation # 프로필 지정
+scripts/setup-venv.sh --nv-link                # NGC 컨테이너용 (시스템 패키지 심볼릭 링크)
 ```
 
 ### 패키지만 업데이트
@@ -841,6 +906,38 @@ make export
 
 ---
 
+## Disk Health & Monitoring
+
+NAS/서버 디스크 건강 상태를 점검하는 유틸리티 스크립트 모음입니다. 모든 스크립트는 **읽기 전용** (데이터 변경 없음)이며, `smartmontools`와 `e2fsprogs`가 필요합니다.
+
+```bash
+# SMART 상세 수집 (전 디스크)
+sudo ./scripts/disk-check-smart.sh [출력디렉토리]
+
+# SMART Extended Self-Test 시작 (병렬, 수 시간 소요)
+sudo ./scripts/disk-check-smart-long.sh
+
+# 배드섹터 검사 (병렬 read-only, 수 시간~수십 시간)
+sudo ./scripts/disk-check-badblocks.sh [출력디렉토리]
+
+# 배드섹터 검사 진행률 모니터링
+./scripts/disk-check-progress.sh [출력디렉토리]
+watch -n 60 ./scripts/disk-check-progress.sh    # 1분마다 자동 갱신
+
+# .badblocks 파일을 512바이트 섹터 구간으로 변환 (파티션 설계용)
+./scripts/disk-badblocks-to-sectors.sh <disk.badblocks> [섹터여유]
+```
+
+| 스크립트 | 용도 | sudo |
+|----------|------|------|
+| `disk-check-smart.sh` | SMART 상세 수집 + 요약 (Health, Reallocated, Pending) | Yes |
+| `disk-check-smart-long.sh` | SMART Extended Self-Test 병렬 실행 | Yes |
+| `disk-check-badblocks.sh` | 병렬 read-only 배드섹터 검사 | Yes |
+| `disk-check-progress.sh` | 배드섹터 검사 진행률 파싱/표시 | No |
+| `disk-badblocks-to-sectors.sh` | badblocks 결과를 섹터 구간으로 변환 | No |
+
+---
+
 ## Shell Integration Details
 
 ### Lazy Loading
@@ -912,7 +1009,12 @@ machine_setting/
 │   ├── sync.sh                 # Git sync (push/pull/status)
 │   ├── export-packages.sh      # venv → requirements export
 │   ├── check-env.sh            # AI environment verification
-│   └── check-secrets.sh        # Secret leak scanner
+│   ├── check-secrets.sh        # Secret leak scanner
+│   ├── disk-check-smart.sh    # SMART 상세 수집
+│   ├── disk-check-smart-long.sh # SMART Extended Self-Test
+│   ├── disk-check-badblocks.sh  # 병렬 배드섹터 검사
+│   ├── disk-check-progress.sh   # 배드섹터 검사 진행률 모니터
+│   └── disk-badblocks-to-sectors.sh # badblocks→섹터 구간 변환
 ├── shell/
 │   ├── install-shell.sh        # Shell RC installer
 │   └── bashrc.d/               # Modular shell config (bash + zsh)
@@ -943,7 +1045,7 @@ machine_setting/
 | 파일 | 위치 | 용도 |
 |------|------|------|
 | `install.state` | `~/.machine_setting/` | 7단계 설치 진행 상태 (STAGE_1~7) |
-| `backups/` | `~/.machine_setting/backups/` | .bashrc/.zshrc 백업 (타임스탬프별) |
+| `backups/` | `~/.machine_setting/backups/` | .bashrc/.zshrc 자동 백업 (셸 통합 설치/업데이트 시 타임스탬프별 생성) |
 | `.machine_setting_profile` | `~/` | 하드웨어 감지 결과 |
 | `.last-update-check` | 저장소 내 | 마지막 업데이트 체크 타임스탬프 |
 | `.preflight_plan` | `env/` | Pre-flight 계획 (임시, 설치 후 삭제) |
