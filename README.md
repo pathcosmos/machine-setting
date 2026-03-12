@@ -5,6 +5,31 @@ Portable AI development environment system. One command to set up Python + AI/ML
 **Supported platforms**: Linux (x86_64, NVIDIA CUDA) + macOS (Apple Silicon M1+, MPS)
 **Supported shells**: bash + zsh
 
+---
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+- [Installation Flow](#installation-flow)
+- [Installed Components](#installed-components)
+- [Daily Usage](#daily-usage)
+- [CLI Options](#cli-options)
+- [Profiles](#profiles)
+- [GPU Support](#gpu-support)
+- [Pre-flight Check](#pre-flight-check)
+- [Reinstallation](#reinstallation)
+- [Uninstall](#uninstall)
+- [Health Check & Recovery](#health-check--recovery)
+- [Cross-Machine Sync](#cross-machine-sync)
+- [Shell Integration Details](#shell-integration-details)
+- [Directory Structure](#directory-structure)
+- [State & Configuration Files](#state--configuration-files)
+- [Troubleshooting](#troubleshooting)
+- [Security](#security)
+
+---
+
 ## Quick Start
 
 ```bash
@@ -15,6 +40,184 @@ cd ~/machine_setting && ./setup.sh
 # Activate AI environment
 aienv
 ```
+
+---
+
+## How It Works
+
+### Overview
+
+`setup.sh`는 6단계 파이프라인으로 동작하며, 각 단계는 **체크포인트 시스템**으로 상태가 추적됩니다. 설치가 중간에 실패해도 완료된 단계를 건너뛰고 실패 지점부터 재개할 수 있습니다.
+
+### Execution Flow
+
+```
+./setup.sh 실행
+    │
+    ├─ 1) Pre-flight Check (interactive 모드)
+    │     현재 시스템 상태를 스캔하고 어떤 작업이 필요한지 표시
+    │     사용자가 설치 항목을 선택/해제 가능
+    │
+    ├─ 2) 이전 설치 상태 확인
+    │     ~/.machine_setting/install.state 파일에서 이전 진행 상태 읽기
+    │     → 이전 실패 있으면: Resume / Reset / Cancel 메뉴 표시
+    │     → 모두 완료 상태면: Reinstall / Cancel 메뉴 표시
+    │
+    └─ 3) 6단계 설치 파이프라인 실행
+          각 단계마다 checkpoint 기록 → 실패 시 자동 rollback
+```
+
+### Checkpoint System
+
+모든 설치 상태는 `~/.machine_setting/install.state`에 기록됩니다:
+
+```
+STAGE_1_HARDWARE=done
+STAGE_2_PYTHON=done
+STAGE_3_VENV=in_progress    ← 이 단계에서 실패
+STAGE_4_NODE=pending
+STAGE_5_JAVA=pending
+STAGE_6_SHELL=pending
+```
+
+각 단계가 실패하면:
+1. 해당 단계의 상태를 `failed`로 기록
+2. **자동 롤백** 실행 (해당 단계에서 설치한 것들 제거)
+3. 다음 실행 시 실패 지점부터 재개 가능
+
+---
+
+## Installation Flow
+
+### [1/6] Hardware Detection
+
+시스템 하드웨어를 자동 감지하여 `~/.machine_setting_profile`에 저장합니다.
+
+| 감지 항목 | Linux | macOS |
+|-----------|-------|-------|
+| GPU | `lspci` + `nvidia-smi` | `system_profiler` (Apple Silicon) |
+| CUDA 버전 | `nvcc --version` / `nvidia-smi` | N/A (MPS 사용) |
+| CPU/RAM | `/proc/cpuinfo`, `/proc/meminfo` | `sysctl` |
+| NGC 컨테이너 | torch NV 버전 체크 + `/opt/nvidia` 존재 | N/A |
+
+감지 결과에 따라 최적 프로필이 자동 선택됩니다:
+- NVIDIA GPU → `gpu-workstation`
+- Apple Silicon → `mac-apple-silicon`
+- NGC 컨테이너 → `ngc-container`
+- RAM ≥ 32GB (GPU 없음) → `cpu-server`
+- RAM ≥ 8GB → `laptop`
+- 그 외 → `minimal`
+
+### [2/6] Python Setup
+
+[uv](https://github.com/astral-sh/uv)를 통해 Python을 설치합니다 (기본: 3.12).
+
+- uv가 없으면 자동 설치 (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- `uv python install 3.12` 으로 관리형 Python 설치
+- 시스템 Python에 영향 없음
+
+### [3/6] AI Environment (Virtual Environment + Packages)
+
+venv 생성 후 패키지 그룹별로 설치합니다.
+
+**venv 위치 옵션:**
+| 모드 | 경로 | 용도 |
+|------|------|------|
+| global (기본) | `~/ai-env` | 모든 프로젝트에서 공유 |
+| local | `./.venv` | 현재 프로젝트 전용 |
+| custom | 사용자 지정 경로 | 특정 파티션 등 |
+
+**패키지 그룹:**
+| 그룹 | 파일 | 내용 |
+|------|------|------|
+| core | `requirements-core.txt` | transformers, accelerate, peft, wandb, numpy 등 |
+| data | `requirements-data.txt` | pandas, SQLAlchemy, psycopg2, pypdf, openpyxl 등 |
+| web | `requirements-web.txt` | fastapi, uvicorn, httpx, gradio, cryptography 등 |
+| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes (자동 감지) |
+| mps | `requirements-mps.txt` | torch (Apple Silicon MPS 포함) |
+| cpu | `requirements-cpu.txt` | torch CPU-only 빌드 |
+
+GPU/MPS/CPU 패키지는 [1/6]에서 감지된 하드웨어에 따라 자동으로 하나만 선택됩니다.
+
+**디스크 요구사항:** 최소 15GB 여유 공간 권장 (GPU 패키지 포함 시)
+
+### [4/6] Node.js (선택)
+
+NVM (Node Version Manager)을 설치하고, Node.js LTS를 설치합니다.
+
+- 프로필에 따라 기본 선택/미선택 결정
+- Interactive 모드에서 설치 여부를 물어봄
+- Lazy loading: 셸 시작 시 NVM을 로드하지 않고, `node`/`npm` 최초 실행 시 로드
+
+### [5/6] Java (선택)
+
+SDKMAN을 설치하고, Java 21 (LTS)을 설치합니다.
+
+- 프로필에 따라 기본 선택/미선택 결정
+- Lazy loading: `sdk`/`java` 최초 실행 시 로드
+
+### [6/6] Shell Integration
+
+`.bashrc`와 `.zshrc`에 모듈 소싱 블록을 추가합니다.
+
+```bash
+# >>> machine_setting >>>
+# Auto-source shell modules from machine_setting
+for f in ~/machine_setting/shell/bashrc.d/[0-9]*.sh; do
+    [ -r "$f" ] && source "$f"
+done
+# Source machine-local secrets (never committed)
+[ -r "$HOME/.bashrc.local" ] && source "$HOME/.bashrc.local"
+# <<< machine_setting <<<
+```
+
+이 블록은 다음 셸 모듈을 순서대로 로드합니다:
+
+| 파일 | 역할 |
+|------|------|
+| `00-path.sh` | PATH 설정 (CUDA, Homebrew, uv, Maven) |
+| `10-aliases.sh` | 공통 aliases |
+| `20-env.sh` | 환경변수 설정 |
+| `30-nvm.sh` | NVM lazy loader (`node`/`npm` 최초 실행 시 로드) |
+| `40-sdkman.sh` | SDKMAN lazy loader |
+| `50-ai-env.sh` | `aienv` / `aienv-off` 함수 + 백그라운드 업데이트 체크 |
+
+---
+
+## Installed Components
+
+설치 후 시스템에 추가되는 항목 정리:
+
+### Files & Directories
+
+| 경로 | 설명 | 삭제 대상 |
+|------|------|-----------|
+| `~/machine_setting/` | 이 저장소 자체 | `rm -rf ~/machine_setting` |
+| `~/ai-env/` | Python venv (global 모드) | `make uninstall` |
+| `~/.local/bin/uv` | uv 패키지 매니저 | 수동 삭제 |
+| `~/.local/share/uv/python/` | uv가 관리하는 Python 빌드 | `make uninstall` |
+| `~/.nvm/` | NVM + Node.js | `make uninstall` |
+| `~/.sdkman/` | SDKMAN + Java | `make uninstall` |
+| `~/.machine_setting/` | 설치 상태/체크포인트/백업 | `make uninstall` |
+| `~/.machine_setting_profile` | 하드웨어 감지 결과 | `make uninstall` |
+| `~/.bashrc.local` | 사용자 시크릿 (자동 생성 템플릿) | **절대 삭제 안함** |
+| `~/.zshrc.local` | zsh용 시크릿 (bashrc.local 심볼릭 링크) | **절대 삭제 안함** |
+
+### Shell RC Modifications
+
+`.bashrc`와 `.zshrc`에 마커 블록(`# >>> machine_setting >>>` ~ `# <<< machine_setting <<<`)이 추가됩니다. 삭제 시 이 블록만 제거되며, 사용자의 다른 설정은 보존됩니다.
+
+### Environment Variables (활성화 시)
+
+| 변수 | 값 | 조건 |
+|------|------|------|
+| `PATH` | `~/.local/bin`, CUDA 경로 등 추가 | 항상 |
+| `CUDA_HOME` | `/usr/local/cuda` | Linux + CUDA |
+| `LD_LIBRARY_PATH` | CUDA lib64 추가 | Linux + CUDA |
+| `NVM_DIR` | `~/.nvm` | Node 설치 시 |
+| `NVIDIA_TF32_OVERRIDE` | `1` | `aienv` 활성화 시 (Ampere+ GPU) |
+
+---
 
 ## Daily Usage
 
@@ -27,20 +230,120 @@ make push              # Export packages + commit + push to remote
 make update            # Pull changes + notify if packages changed
 make status            # Show sync status
 make export            # Export current venv to requirements files
+make doctor            # Full health check
+make recover           # Auto-recover broken components
 ```
+
+### `aienv` 동작 상세
+
+1. `~/ai-env/bin/activate` 실행 (venv 활성화)
+2. `NVIDIA_TF32_OVERRIDE=1` 설정 (Ampere+ GPU에서 FP32 연산 ~2x 가속)
+3. **백그라운드 업데이트 체크** 시작:
+   - 24시간마다 `git fetch origin main` 실행
+   - 로컬과 리모트가 다르면 업데이트 알림 출력
+   - 완전히 백그라운드로 실행되어 셸 속도에 영향 없음
+
+### `make check` 출력 예시
+
+```
+=== AI Environment Check ===
+  Venv: /home/user/ai-env
+  Python: Python 3.12.8
+
+  Installed packages: 247
+
+--- Core Packages ---
+  OK  transformers 4.47.0
+  OK  datasets 3.2.0
+  OK  accelerate 1.2.1
+  ...
+
+--- GPU Packages ---
+  torch 2.5.1+cu126 (CUDA 12.6, 2 GPU(s), NVIDIA RTX 4090)
+  flash_attn 2.7.2
+  bitsandbytes 0.45.0
+```
+
+---
 
 ## CLI Options
 
-```bash
-# Interactive (default)
-./setup.sh
+### Interactive (기본)
 
-# Non-interactive
+```bash
+./setup.sh
+```
+
+모든 단계에서 옵션을 물어봅니다 (Python 버전, venv 위치, Node/Java 설치 여부). Pre-flight check가 먼저 실행되어 현재 상태와 필요한 작업을 보여줍니다.
+
+### Non-interactive
+
+```bash
+# 전체 지정
 ./setup.sh --python 3.12 --venv global --node --java
+
+# 프로필 사용
 ./setup.sh --profile gpu-workstation
 ./setup.sh --profile mac-apple-silicon
+
+# 선택적 설치
 ./setup.sh --no-node --no-java --venv local
+
+# Custom venv 경로
+./setup.sh --venv /data/ai-env
 ```
+
+### Pre-flight & Planning
+
+```bash
+# 설치 계획만 확인 (실제 설치 안함)
+./setup.sh --plan
+make plan
+
+# Pre-flight check 후 선택적 설치
+./setup.sh --preflight
+make preflight
+```
+
+### Resume & Recovery
+
+```bash
+# 이전 실패 지점부터 재개
+./setup.sh --resume
+
+# 상태 초기화 후 처음부터
+./setup.sh --reset
+
+# 특정 단계부터 시작 (이전 단계는 완료 처리)
+./setup.sh --from 3    # Stage 3 (venv)부터
+./setup.sh --from 6    # Stage 6 (shell)만
+
+# 건강 체크
+./setup.sh --doctor
+
+# 자동 복구
+./setup.sh --recover
+```
+
+### 전체 옵션 요약
+
+| Flag | 설명 |
+|------|------|
+| `--python <ver>` | Python 버전 (기본: 3.12) |
+| `--venv <mode>` | `global` / `local` / `<custom-path>` |
+| `--node` / `--no-node` | Node.js 설치/미설치 |
+| `--java` / `--no-java` | Java 설치/미설치 |
+| `--profile <name>` | 프로필 사용 |
+| `--plan` | Pre-flight check만 실행 |
+| `--preflight` | Pre-flight check 후 설치 |
+| `--resume` | 실패 지점부터 재개 |
+| `--reset` | 상태 초기화 후 처음부터 |
+| `--from <N>` | Stage N (1-6)부터 시작 |
+| `--doctor` | 건강 체크 |
+| `--recover` | 자동 복구 |
+| `--uninstall` | 삭제 (추가 플래그 가능) |
+
+---
 
 ## Profiles
 
@@ -53,14 +356,40 @@ make export            # Export current venv to requirements files
 | laptop | Any | None | Yes | No | core+data+web+cpu |
 | minimal | Any | None | No | No | core only |
 
+### Machine-specific 설정
+
+`config/machine.conf`를 만들어 기본 설정을 오버라이드할 수 있습니다 (`.gitignore`에 포함):
+
+```bash
+cp config/machine.conf.example config/machine.conf
+# 편집: Python 버전, Node/Java 설치 여부, 패키지 그룹 등
+```
+
+---
+
 ## GPU Support
 
-| Platform | GPU | Backend | Auto-detected |
+| Platform | GPU | Backend | 자동 감지 방법 |
 |----------|-----|---------|---------------|
-| NGC container | NVIDIA | CUDA (NV custom build symlink) | torch version check |
-| Linux | NVIDIA | CUDA (cu130, cu126, etc.) | lspci + nvcc |
+| NGC container | NVIDIA | CUDA (NV custom build symlink) | torch 버전 체크 |
+| Linux | NVIDIA | CUDA (cu131, cu130, cu126 등) | lspci + nvcc |
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
-| Any | None | CPU fallback | automatic |
+| Any | None | CPU fallback | 자동 |
+
+### CUDA 버전 매칭
+
+감지된 CUDA 버전에 따라 PyTorch index URL이 자동 선택됩니다 (`config/gpu-index-urls.conf`):
+
+```
+cu131=https://download.pytorch.org/whl/cu131
+cu130=https://download.pytorch.org/whl/cu130
+cu126=https://download.pytorch.org/whl/cu126
+cu124=https://download.pytorch.org/whl/cu124
+cu121=https://download.pytorch.org/whl/cu121
+cpu=https://download.pytorch.org/whl/cpu
+```
+
+감지된 CUDA suffix가 목록에 없으면, 가장 가까운 낮은 버전으로 자동 fallback됩니다.
 
 ### NGC Container Mode
 
@@ -75,64 +404,457 @@ NGC 컨테이너처럼 시스템에 NV 커스텀 빌드(torch, flash_attn, trans
 scripts/setup-venv.sh --nv-link
 ```
 
-## Structure
+**심볼릭 링크 대상 패키지:** torch, torchvision, torchaudio, triton, flash_attn, transformer_engine
+
+동작 방식:
+1. 시스템 site-packages 경로 감지 (예: `/usr/local/lib/python3.12/dist-packages`)
+2. 대상 패키지 디렉토리를 venv의 site-packages에 심볼릭 링크
+3. `.dist-info` 디렉토리도 함께 링크 (pip이 패키지를 인식하도록)
+
+---
+
+## Pre-flight Check
+
+`./setup.sh --plan` 또는 `make plan`으로 실제 설치 없이 현재 시스템 상태를 확인합니다.
+
+```
+╔══════════════════════════════════════════════════════╗
+║            Pre-flight System Check                  ║
+╚══════════════════════════════════════════════════════╝
+
+  System:  Ubuntu 22.04.5 LTS / AMD EPYC 7763 (128 cores) / 512GB RAM / 2847GB free
+  GPU:     NVIDIA A100-SXM4-80GB / CUDA 12.6 (cu126)
+  Profile: gpu-workstation
+
+  #  Component            Current Status                 Proposed Action
+  ─────────────────────────────────────────────────────────────────────────────
+  * 1  Hardware Profile     not generated                  → INSTALL
+       Generate ~/.machine_setting_profile
+    2  Python 3.12          3.12.8 installed + uv 0.5.14   (ok)
+  * 3  AI Environment       not created                    → INSTALL
+       Create ~/ai-env + install [core data web + GPU]
+    4  Node.js              v22.12.0 (NVM)                 (ok)
+  * 5  Java 21              not installed                  → INSTALL
+       Install SDKMAN + Java 21
+    6  Shell Integration    configured (.bashrc .zshrc)    (ok)
+```
+
+Interactive 모드에서는 항목별로 토글하여 원하는 것만 설치할 수 있습니다.
+
+---
+
+## Reinstallation
+
+### 전체 재설치
+
+```bash
+# 방법 1: 상태 리셋 후 재설치
+./setup.sh --reset
+
+# 방법 2: make 사용
+make reset
+```
+
+이 명령은 `~/.machine_setting/install.state` 파일을 초기화하고, 모든 단계를 처음부터 다시 실행합니다. 이미 설치된 컴포넌트(venv, Python 등)는 각 단계에서 "이미 존재" 여부를 확인하여 재생성 여부를 물어봅니다.
+
+### 특정 단계만 재설치
+
+```bash
+# Stage 3 (venv)부터 재설치 — Stage 1, 2는 건너뜀
+./setup.sh --from 3
+
+# Stage 6 (shell integration)만 재설치
+./setup.sh --from 6
+```
+
+### venv만 재생성
+
+```bash
+# 기존 venv 삭제 후 재생성 (패키지 전체 재설치)
+rm -rf ~/ai-env
+make venv
+
+# 또는 스크립트 직접 실행
+scripts/setup-venv.sh --global --python 3.12
+```
+
+### 패키지만 업데이트
+
+```bash
+# 리모트에서 최신 requirements 가져와서 venv 업데이트
+make update
+
+# 수동으로 venv에 패키지 재설치
+scripts/setup-venv.sh
+```
+
+---
+
+## Uninstall
+
+### Interactive 모드 (기본)
+
+```bash
+make uninstall
+# 또는
+./scripts/uninstall.sh
+```
+
+설치된 컴포넌트 목록을 보여주고, 토글 방식으로 삭제할 항목을 선택합니다:
+
+```
+=== Machine Setting Uninstall ===
+
+Components found:
+  [1] ✓ AI Virtual Environment (~/ai-env, 12G)
+  [2] ✓ Python via uv (1.8G)
+  [3] ✓ NVM + Node.js (287M)
+  [4]   Java/SDKMAN (not installed)
+  [5] ✓ Shell integration (.bashrc .zshrc)
+  [6] ✓ Config & state files
+
+Toggle numbers to select/deselect, 'a' for all, Enter to proceed:
+```
+
+### 전체 삭제
+
+```bash
+# 모든 컴포넌트 삭제 (확인 필요: 'UNINSTALL' 입력)
+./scripts/uninstall.sh --all
+
+# config/state는 유지하고 런타임만 삭제
+./scripts/uninstall.sh --all --keep-config
+```
+
+### 특정 컴포넌트만 삭제
+
+```bash
+# venv와 Node.js만 삭제
+./scripts/uninstall.sh --component venv,node
+
+# 사용 가능한 컴포넌트: venv, python, node, java, shell, config
+```
+
+### Dry-run (삭제 미리보기)
+
+```bash
+make uninstall-dry
+# 또는
+./scripts/uninstall.sh --dry-run
+```
+
+### 완전 삭제
+
+uninstall 후에도 `~/machine_setting` 저장소 자체는 남아있습니다. 완전히 제거하려면:
+
+```bash
+./scripts/uninstall.sh --all
+rm -rf ~/machine_setting
+```
+
+**주의:** `~/.bashrc.local`과 `~/.zshrc.local`은 사용자 시크릿 파일이므로 절대 자동 삭제되지 않습니다.
+
+---
+
+## Health Check & Recovery
+
+### Doctor (건강 체크)
+
+```bash
+make doctor
+# 또는
+./scripts/doctor.sh
+```
+
+다음 항목을 점검합니다:
+
+| 체크 항목 | 확인 내용 |
+|-----------|-----------|
+| Disk space | venv 경로에 1GB 이상 여유 |
+| Hardware profile | `~/.machine_setting_profile` 존재 및 유효성 |
+| uv | uv 설치 및 버전 |
+| Python | uv로 관리되는 Python 존재 |
+| Virtual environment | venv 디렉토리, bin/python, bin/activate 존재 |
+| Key packages | torch, transformers, anthropic import 가능 |
+| Node.js | NVM + Node 설치 상태 (설치 선택 시) |
+| Java | SDKMAN + Java 설치 상태 (설치 선택 시) |
+| Shell integration | .bashrc/.zshrc에 마커 블록 존재 |
+| Platform | Xcode CLT (macOS) / CUDA driver (Linux GPU) |
+
+출력 예시:
+
+```
+=== Machine Setting Doctor ===
+
+  [OK]   Disk space (2847GB free)
+  [OK]   Hardware profile
+  [OK]   uv (uv 0.5.14)
+  [OK]   Python (Python 3.12.8)
+  [OK]   Virtual environment (~/ai-env, 247 packages)
+  [OK]   Key packages (torch: ok, transformers: ok, anthropic: ok)
+  [OK]   Node.js (v22.12.0)
+  [SKIP] Java (not installed)
+  [OK]   Shell integration (.bashrc .zshrc)
+  [OK]   CUDA driver (560.35.03)
+
+Summary: 9 ok, 0 failed, 0 warnings, 1 skipped
+All checks passed!
+```
+
+### Auto-recover (자동 복구)
+
+```bash
+# 모든 실패 항목 자동 복구
+make recover
+# 또는
+./scripts/doctor.sh --recover
+
+# 특정 컴포넌트만 복구
+./scripts/doctor.sh --recover python
+./scripts/doctor.sh --recover venv
+./scripts/doctor.sh --recover shell
+```
+
+사용 가능한 복구 대상: `disk`, `hardware`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
+
+각 컴포넌트별 복구 동작:
+
+| 컴포넌트 | 복구 동작 |
+|----------|-----------|
+| hardware | `detect-hardware.sh` 재실행 |
+| uv | uv 재설치 (`curl ... \| sh`) |
+| python | uv가 없으면 먼저 설치, 그 후 `uv python install` |
+| venv | venv 재생성 + 패키지 재설치 |
+| packages | venv 전체 재설치 (= venv 복구) |
+| node | NVM + Node.js 재설치 |
+| java | SDKMAN + Java 재설치 |
+| shell | `install-shell.sh` 재실행 |
+| platform | macOS: Xcode CLT 안내 / Linux: NVIDIA driver 안내 |
+| disk | 수동 정리 안내 |
+
+### Package Verification (패키지 무결성 검증)
+
+```bash
+make verify
+# 또는
+./scripts/doctor.sh --verify-packages
+```
+
+requirements 파일에 명시된 패키지가 모두 설치되어 있는지 확인합니다:
+
+```
+=== Package Verification ===
+
+  Missing packages (required but not installed):
+    - some-package
+
+  Extra packages (installed but not in requirements): 43
+  (This is normal — they may be transitive dependencies)
+
+  Result: 1 missing package(s)
+  Run './scripts/doctor.sh --recover venv' to install missing packages.
+```
+
+---
+
+## Cross-Machine Sync
+
+여러 머신에서 동일한 패키지 구성을 유지하기 위한 Git 기반 동기화 시스템입니다.
+
+### Push (현재 머신 → 리모트)
+
+```bash
+make push
+```
+
+동작:
+1. 활성화된 venv에서 현재 패키지 목록을 requirements 파일로 export
+2. 변경사항 `git add -A`
+3. 자동 커밋 메시지 생성: `update: sync from <hostname> at <timestamp>`
+4. `git pull --rebase` 후 `git push`
+
+### Pull (리모트 → 현재 머신)
+
+```bash
+make update
+```
+
+동작:
+1. `git pull --rebase`
+2. requirements 파일 변경 여부 감지
+3. 변경되었으면 `scripts/setup-venv.sh` 실행 안내 출력
+
+### Status
+
+```bash
+make status
+```
+
+로컬 변경사항, 리모트 대비 ahead/behind 커밋 수, 마지막 커밋 정보를 보여줍니다.
+
+### Export
+
+```bash
+make export
+```
+
+현재 venv의 패키지를 카테고리별 requirements 파일로 분류/export합니다:
+- GPU 패키지 → `requirements-gpu.txt`
+- Data 패키지 → `requirements-data.txt`
+- Web 패키지 → `requirements-web.txt`
+- 나머지 → `requirements-core.txt`
+- CPU/MPS 파일은 수동 관리
+
+---
+
+## Shell Integration Details
+
+### Lazy Loading
+
+NVM과 SDKMAN은 **lazy loading** 방식으로 구현되어 셸 시작 시간에 영향을 주지 않습니다:
+
+```bash
+# 30-nvm.sh: node/npm 최초 실행 시에만 NVM 로드
+for cmd in nvm node npm npx; do
+    eval "${cmd}() { unset -f nvm node npm npx; _load_nvm; ${cmd} \"\$@\"; }"
+done
+```
+
+실제 `node --version`을 처음 실행하면 그때 NVM이 로드되고, 이후에는 직접 실행됩니다.
+
+### Background Update Check
+
+`aienv` 실행 시 백그라운드에서 업데이트 체크가 이루어집니다:
+
+1. `~/.last-update-check` 타임스탬프 확인
+2. 24시간 이내면 skip
+3. `git fetch origin main --quiet` (백그라운드)
+4. 로컬 ≠ 리모트이면 업데이트 알림 출력
+
+### Secrets
+
+`~/.bashrc.local`(또는 `~/.zshrc.local`)에 API 키 등 시크릿을 저장합니다:
+
+```bash
+# ~/.bashrc.local (example)
+export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..."
+export WANDB_API_KEY="..."
+```
+
+이 파일은 셸 시작 시 자동으로 source되며, **절대 Git에 커밋되지 않습니다**.
+
+---
+
+## Directory Structure
 
 ```
 machine_setting/
-├── setup.sh              # Single-entry bootstrap
-├── Makefile              # make setup/update/push/status
-├── config/               # Default + machine-specific config
-├── packages/             # Categorized requirements files
+├── setup.sh              # Single-entry bootstrap (6-stage pipeline)
+├── Makefile              # make setup/update/push/status/doctor/uninstall
+├── config/
+│   ├── default.conf          # Default settings (Python 3.12, Node LTS, Java 21)
+│   ├── machine.conf.example  # Machine-specific override template
+│   └── gpu-index-urls.conf   # PyTorch CUDA index URL mapping
+├── packages/
 │   ├── requirements-core.txt   # Platform-independent AI/ML
 │   ├── requirements-gpu.txt    # NVIDIA CUDA packages
 │   ├── requirements-mps.txt    # Apple Silicon MPS packages
 │   ├── requirements-cpu.txt    # CPU-only fallback
 │   ├── requirements-data.txt   # Data/DB packages
 │   └── requirements-web.txt    # Web/API packages
-├── scripts/              # Individual install + utility scripts
-├── shell/bashrc.d/       # Modular shell config (bash + zsh)
-├── profiles/             # Pre-configured machine profiles
-└── docs/                 # System documentation
+├── scripts/
+│   ├── detect-hardware.sh      # GPU/CUDA/MPS/RAM/CPU detection
+│   ├── install-python.sh       # uv + Python install
+│   ├── setup-venv.sh           # venv creation + package install
+│   ├── install-node.sh         # NVM + Node.js
+│   ├── install-java.sh         # SDKMAN + Java
+│   ├── lib-checkpoint.sh       # Checkpoint/rollback library
+│   ├── preflight.sh            # Pre-flight system check
+│   ├── doctor.sh               # Health check & recovery
+│   ├── uninstall.sh            # Component uninstaller
+│   ├── sync.sh                 # Git sync (push/pull/status)
+│   ├── export-packages.sh      # venv → requirements export
+│   ├── check-env.sh            # AI environment verification
+│   └── check-secrets.sh        # Secret leak scanner
+├── shell/
+│   ├── install-shell.sh        # Shell RC installer
+│   └── bashrc.d/               # Modular shell config (bash + zsh)
+│       ├── 00-path.sh          # PATH (CUDA, Homebrew, uv)
+│       ├── 10-aliases.sh       # Common aliases
+│       ├── 20-env.sh           # Environment variables
+│       ├── 30-nvm.sh           # NVM lazy loader
+│       ├── 40-sdkman.sh        # SDKMAN lazy loader
+│       ├── 50-ai-env.sh        # aienv/aienv-off + update check
+│       └── 90-local.sh.example # Secrets template
+├── profiles/                   # Pre-configured machine profiles
+│   ├── gpu-workstation.conf
+│   ├── mac-apple-silicon.conf
+│   ├── ngc-container.conf
+│   ├── cpu-server.conf
+│   ├── laptop.conf
+│   └── minimal.conf
+└── docs/                       # System documentation
 ```
 
-## Maintenance & Recovery
+---
 
-```bash
-# Health check — diagnose all components
-make doctor
+## State & Configuration Files
 
-# Auto-recover broken components
-make recover
+### 런타임 상태 파일 (Git 외부)
 
-# Verify installed packages vs requirements
-make verify
+| 파일 | 위치 | 용도 |
+|------|------|------|
+| `install.state` | `~/.machine_setting/` | 6단계 설치 진행 상태 |
+| `backups/` | `~/.machine_setting/backups/` | .bashrc/.zshrc 백업 (타임스탬프별) |
+| `.machine_setting_profile` | `~/` | 하드웨어 감지 결과 |
+| `.last-update-check` | 저장소 내 | 마지막 업데이트 체크 타임스탬프 |
+| `.preflight_plan` | `env/` | Pre-flight 계획 (임시, 설치 후 삭제) |
 
-# Resume failed installation (skip completed stages)
-./setup.sh --resume
+### 설정 파일
 
-# Reset state and start fresh
-./setup.sh --reset
-make reset
+| 파일 | 위치 | 용도 | Git 포함 |
+|------|------|------|----------|
+| `default.conf` | `config/` | 기본 설정 | Yes |
+| `machine.conf` | `config/` | 머신별 오버라이드 | No (.gitignore) |
+| `gpu-index-urls.conf` | `config/` | CUDA→PyTorch URL 매핑 | Yes |
+| `*.conf` | `profiles/` | 프리셋 프로필 | Yes |
+| `.bashrc.local` | `~/` | 사용자 시크릿 | No |
 
-# Start from a specific stage (1-6)
-./setup.sh --from 3
-
-# Interactive uninstall (toggle components)
-make uninstall
-
-# Show what would be removed
-make uninstall-dry
-
-# Remove specific components
-./scripts/uninstall.sh --component venv,node
-
-# Remove everything (requires confirmation)
-./scripts/uninstall.sh --all
-```
+---
 
 ## Troubleshooting
 
 환경 구성 중 문제가 발생하면 [docs/troubleshooting.md](docs/troubleshooting.md)를 참고하세요.
+
+### 빠른 진단
+
+```bash
+# 전체 건강 체크
+make doctor
+
+# 패키지 무결성 검증
+make verify
+
+# 시스템 상태 확인 (설치 안함)
+make plan
+
+# 환경 상세 확인 (GPU, 패키지 버전)
+make check
+```
+
+### 자주 발생하는 문제
+
+| 증상 | 해결 |
+|------|------|
+| `aienv: command not found` | `source ~/.bashrc` 또는 새 터미널 열기 |
+| `No venv at ~/ai-env` | `make venv` 또는 `./setup.sh --from 3` |
+| GPU가 감지되지 않음 | `make detect` 후 `make doctor` |
+| 패키지 import 실패 | `make verify` → `make recover` |
+| 설치 중간에 실패 | `./setup.sh --resume` |
+| 셸 설정이 깨짐 | `./scripts/doctor.sh --recover shell` (백업에서 복원) |
+
+---
 
 ## Security
 
