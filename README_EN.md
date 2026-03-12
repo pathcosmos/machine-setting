@@ -187,6 +187,86 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 
 **Disk requirements:** Minimum 15GB free space recommended (with GPU packages)
 
+<details>
+<summary><b>Detailed Package List (click to expand)</b></summary>
+
+#### core — Core AI/ML (`requirements-core.txt`, ~150 packages)
+
+| Category | Packages | Description |
+|----------|----------|-------------|
+| **LLM Providers** | `anthropic`, `openai`, `google-generativeai` + 7 Google API packages | Claude, GPT, Gemini APIs |
+| **LangChain** | `langchain`, `langchain-community`, `langchain-core`, `langchain-huggingface`, `langgraph`, `langgraph-checkpoint`, `langgraph-prebuilt`, `langgraph-sdk`, `langsmith` | Agents/chains/graphs |
+| **HuggingFace** | `transformers`, `datasets`, `tokenizers`, `huggingface_hub`, `accelerate`, `peft`, `trl`, `sentence-transformers`, `safetensors`, `hf-xet`, `sentencepiece` | Model training/inference/fine-tuning |
+| **Classical ML** | `scikit-learn`, `scipy`, `xgboost`, `lightgbm`, `numba`, `llvmlite` | Traditional machine learning |
+| **Vector/Embedding** | `chromadb`, `faiss-cpu` | Vector DB/similarity search |
+| **Visualization** | `matplotlib`, `seaborn`, `contourpy`, `cycler`, `fonttools`, `kiwisolver` | Charts/graphs |
+| **Experiment Tracking** | `wandb`, `mlflow`, `tensorboard`, `optuna` | Experiment tracking/hyperparameter optimization |
+| **Scientific** | `sympy`, `mpmath`, `networkx`, `shapely`, `h5py` | Math/graph/geo/HDF5 |
+| **Audio** | `pydub`, `ffmpy` | Audio processing/conversion |
+| **NLP/Text** | `regex`, `python-bidi`, `Markdown`, `markdown-it-py`, `rich`, `Pygments` | Text processing/rendering |
+| **Utilities** | `pydantic`, `pydantic-settings`, `python-dotenv`, `click`, `typer`, `loguru`, `structlog`, `tqdm`, `tenacity`, `backoff` | Config/CLI/logging/retry |
+| **Async** | `anyio`, `aiofiles`, `aiohappyeyeballs`, `aiosignal`, `frozenlist`, `multidict`, `yarl` | Async IO |
+| **Serialization** | `typing_extensions`, `marshmallow`, `dataclasses-json`, `jsonschema`, `jsonpatch`, `PyYAML` | Schema/serialization |
+| **gRPC/Protobuf** | `grpcio`, `grpcio-status`, `proto-plus`, `protobuf` | RPC communication |
+| **Monitoring** | `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-grpc` + 3 more, `posthog` | Telemetry/analytics |
+| **Infra** | `kubernetes`, `GitPython`, `APScheduler`, `psutil`, `watchdog` | K8s/Git/scheduling |
+| **Build** | `packaging`, `setuptools`, `wheel`, `build`, `ninja` | Package build tools |
+
+#### gpu — NVIDIA GPU (`requirements-gpu.txt`, ~15 packages)
+
+| Category | Packages | Description |
+|----------|----------|-------------|
+| **PyTorch** | `torch`, `torchaudio`, `torchvision`, `triton` | GPU builds via CUDA index URL |
+| **CUDA Bindings** | `cuda-bindings`, `cuda-pathfinder` | CUDA Python bindings |
+| **GPU Acceleration** | `flash-attn`, `bitsandbytes`, `onnxruntime-gpu` | FlashAttention/quantization/GPU inference |
+| **Distributed Training** | `deepspeed`, `pytorch-lightning`, `torchmetrics` | Multi-GPU training |
+| **GPU Monitoring** | `pynvml`, `gpustat`, `nvitop` | GPU usage/temperature monitoring |
+| **Inference Optimization** | `vllm`, `optimum` | High-speed LLM serving/model optimization |
+
+> **Note:** `nvidia-*` runtime libraries are auto-resolved as `torch` dependencies and not pinned here. Pinning them breaks cross-CUDA-version compatibility.
+
+#### data — Data Processing (`requirements-data.txt`, ~35 packages)
+
+| Category | Packages | Description |
+|----------|----------|-------------|
+| **DataFrames** | `pandas`, `pyarrow`, `numpy`, `polars`, `duckdb`, `connectorx` | Data analysis/query engines |
+| **DB Drivers** | `SQLAlchemy`, `alembic`, `psycopg2-binary`, `PyMySQL`, `oracledb`, `cx-Oracle`, `clickhouse-connect`, `clickhouse-driver` | PostgreSQL/MySQL/Oracle/ClickHouse |
+| **Document Processing** | `pdfplumber`, `pdfminer.six`, `pypdf`, `pypdfium2`, `python-docx`, `python-pptx`, `openpyxl`, `xlsxwriter`, `lxml` | PDF/Word/Excel/PPT parsing |
+| **Image** | `pillow`, `opencv-python`, `opencv-python-headless`, `scikit-image`, `ImageIO` | Image processing/CV |
+| **OCR** | `easyocr`, `pytesseract` | Optical character recognition |
+| **Serialization** | `orjson`, `ormsgpack`, `jsonlines` | High-speed JSON/MsgPack |
+| **Messaging** | `aiokafka`, `kafka-python`, `paho-mqtt` | Kafka/MQTT streaming |
+| **Cloud Storage** | `boto3`, `botocore`, `s3transfer` | AWS S3 |
+
+#### web — Web/API (`requirements-web.txt`, ~25 packages)
+
+| Category | Packages | Description |
+|----------|----------|-------------|
+| **Frameworks** | `fastapi`, `starlette`, `uvicorn`, `uvloop`, `Flask`, `Werkzeug`, `gradio`, `gradio_client` | REST API/UI servers |
+| **HTTP Clients** | `httpx`, `httpx-sse`, `httpcore`, `requests`, `requests-oauthlib`, `aiohttp` | Sync/async HTTP |
+| **Server Utilities** | `h11`, `httptools`, `websockets`, `websocket-client`, `watchfiles`, `python-multipart` | High-performance server/WebSocket |
+| **Templating** | `Jinja2`, `MarkupSafe`, `itsdangerous` | HTML rendering |
+| **Auth/Security** | `PyJWT`, `bcrypt`, `cryptography`, `pyOpenSSL` | JWT/encryption/TLS |
+| **Monitoring** | `prometheus_client`, `sentry-sdk` | Metrics/error tracking |
+
+#### cpu — CPU Only (`requirements-cpu.txt`, 4 packages)
+
+| Package | Description |
+|---------|-------------|
+| `torch`, `torchaudio`, `torchvision` | CPU builds (PyTorch CPU index URL) |
+| `onnxruntime` | CPU inference engine |
+
+#### mps — Apple Silicon (`requirements-mps.txt`, 4 packages)
+
+| Package | Description |
+|---------|-------------|
+| `torch`, `torchaudio`, `torchvision` | Default PyPI builds (MPS included) |
+| `onnxruntime` | CPU inference engine (no GPU version on macOS) |
+
+**Installation combo example:** GPU workstation = `core` + `gpu` + `data` + `web` ≈ **230+ packages**
+
+</details>
+
 ### [5/7] Node.js (optional)
 
 Installs NVM (Node Version Manager) and Node.js LTS.
