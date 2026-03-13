@@ -10,6 +10,10 @@
 # NODE_VERSION="22"
 # JAVA_VERSION="17"
 
+# NVIDIA GPU stack: align to system CUDA (e.g. 13.0 for RTX 50 / Blackwell)
+# NVIDIA_CUDA_VERSION="13-0"   # default in default.conf
+# NVIDIA_CUDA_VERSION="12-6"   # for older drivers / cu126 systems
+
 # Additional pip install arguments
 # PIP_EXTRA_ARGS="--proxy http://proxy:8080"
 

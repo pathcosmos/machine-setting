@@ -16,7 +16,7 @@ cuda-bindings
 cuda-pathfinder
 
 # GPU-accelerated ML (from PyPI via --extra-index-url)
-flash-attn
+# flash-attn  # optional: skip if no prebuilt wheel for your CUDA (e.g. cu130); install manually when available
 bitsandbytes
 onnxruntime-gpu
 

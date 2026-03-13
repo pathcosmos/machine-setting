@@ -33,6 +33,7 @@ OPT_SYSTEM_TOOLS=true
 OPT_KERNEL_TUNING=true
 OPT_UNINSTALL=false
 OPT_DRY_RUN=false
+OPT_EXTRAS_ONLY=false
 OPT_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-}"   # empty = auto (recommended)
 OPT_CUDA_VERSION="${NVIDIA_CUDA_VERSION:-}"       # empty = latest
 OPT_OPEN_KERNEL="${NVIDIA_OPEN_KERNEL:-auto}"     # auto | true | false
@@ -53,6 +54,7 @@ while [[ $# -gt 0 ]]; do
         --cuda-version)      OPT_CUDA_VERSION="$2"; shift 2 ;;
         --open-kernel)       OPT_OPEN_KERNEL=true; shift ;;
         --proprietary)       OPT_OPEN_KERNEL=false; shift ;;
+        --extras-only)       OPT_EXTRAS_ONLY=true; shift ;;
         --uninstall)         OPT_UNINSTALL=true; shift ;;
         --dry-run)           OPT_DRY_RUN=true; shift ;;
         --help|-h)
@@ -68,6 +70,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-container-toolkit  Skip NVIDIA Container Toolkit"
             echo "  --no-system-tools       Skip system utilities (numactl, hwloc, etc.)"
             echo "  --no-kernel-tuning      Skip kernel/sysctl tuning"
+            echo "  --extras-only           Install only system tools + kernel tuning (no driver/CUDA/cuDNN)"
             echo "  --driver-version <ver>  Specific driver version (default: auto/recommended)"
             echo "  --cuda-version <ver>    Specific CUDA version, e.g. 13-0 (default: latest)"
             echo "  --open-kernel           Force open kernel modules"
@@ -1495,32 +1498,45 @@ LIMITS
 # Main Installation Flow
 # ============================================================
 
-# Step 1: Set up NVIDIA apt repository
-setup_nvidia_repo
+# Steps 1-7: skip when --extras-only (only system tools + kernel tuning)
+if [ "$OPT_EXTRAS_ONLY" = false ]; then
+    # Step 1: Set up NVIDIA apt repository
+    setup_nvidia_repo
 
-# Step 2: Install driver
-install_driver
+    # Step 2: Install driver
+    install_driver
 
-# Step 3: Install CUDA Toolkit
-install_cuda
+    # Step 3: Install CUDA Toolkit
+    install_cuda
 
-# Step 4: Install cuDNN
-install_cudnn
+    # Step 4: Install cuDNN
+    install_cudnn
 
-# Step 5: Install NCCL
-install_nccl
+    # Step 5: Install NCCL
+    install_nccl
 
-# Step 6: Enterprise tools (datacenter GPUs)
-install_enterprise_tools
+    # Step 6: Enterprise tools (datacenter GPUs)
+    install_enterprise_tools
 
-# Step 7: NVIDIA Container Toolkit
-install_container_toolkit
+    # Step 7: NVIDIA Container Toolkit
+    install_container_toolkit
+fi
 
 # Step 8: System tools and build dependencies
 install_system_tools
 
 # Step 9: Kernel/sysctl tuning
 apply_kernel_tuning
+
+# --extras-only: print short summary and exit (skip full summary)
+if [ "$OPT_EXTRAS_ONLY" = true ]; then
+    echo ""
+    echo "  === GPU Extras Summary ==="
+    echo "  System tools: ninja-build, hwloc, nvtop, lm-sensors, fio, etc."
+    echo "  Kernel tuning: sysctl + limits applied"
+    echo ""
+    exit 0
+fi
 
 # ============================================================
 # Summary
@@ -1537,12 +1553,10 @@ if [ "$OPT_CUDA" = true ] && [ -x /usr/local/cuda/bin/nvcc ]; then
     echo "  CUDA: $(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || echo 'installed')"
 fi
 if [ "$OPT_CUDNN" = true ]; then
-    local cudnn_ver
     cudnn_ver=$(dpkg -l 'cudnn9-*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
     [ -n "$cudnn_ver" ] && echo "  cuDNN: $cudnn_ver"
 fi
 if [ "$OPT_NCCL" = true ]; then
-    local nccl_ver
     nccl_ver=$(dpkg -l 'libnccl2' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
     [ -n "$nccl_ver" ] && echo "  NCCL: $nccl_ver"
 fi

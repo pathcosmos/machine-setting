@@ -414,6 +414,7 @@ make recover           # Auto-recover broken components
 | `make uninstall` | 대화형 삭제 |
 | `make uninstall-dry` | 삭제 미리보기 |
 | `make reset` | 상태 초기화 후 처음부터 |
+| `make gpu-extras` | GPU 보조만 설치 (시스템 유틸 + 커널 튜닝, sudo). 드라이버/CUDA는 이미 있을 때 사용 |
 
 ### `aienv` 동작 상세
 
@@ -601,6 +602,7 @@ cp config/machine.conf.example config/machine.conf
 ./scripts/install-nvidia.sh                    # 전체 자동
 ./scripts/install-nvidia.sh --driver-only      # 드라이버만
 ./scripts/install-nvidia.sh --no-driver        # 드라이버 제외 (CUDA/cuDNN/NCCL만)
+./scripts/install-nvidia.sh --extras-only      # 보조만 (시스템 유틸 + 커널 튜닝, 드라이버/CUDA 스킵). make gpu-extras와 동일
 ./scripts/install-nvidia.sh --enterprise       # 엔터프라이즈 도구 포함
 ./scripts/install-nvidia.sh --dry-run          # 설치 미리보기 (심층 진단)
 ./scripts/install-nvidia.sh --uninstall        # NVIDIA 스택 전체 제거
@@ -626,7 +628,7 @@ cp config/machine.conf.example config/machine.conf
 |------|--------|------|
 | `INSTALL_NVIDIA` | `true` | NVIDIA 스테이지 전체 활성화/비활성화 |
 | `NVIDIA_DRIVER_VERSION` | `""` (자동) | 드라이버 버전 (비어있으면 추천 버전 자동 선택) |
-| `NVIDIA_CUDA_VERSION` | `""` (최신) | CUDA 버전 |
+| `NVIDIA_CUDA_VERSION` | `"13-0"` (CUDA 13.0) | CUDA 버전. 구형 GPU는 machine.conf에서 `"12-6"` 등 지정 |
 | `NVIDIA_OPEN_KERNEL` | `auto` | open/proprietary 커널 모듈 선택 |
 | `NVIDIA_ENTERPRISE` | `false` | 엔터프라이즈 도구 (DCGM, FM, GDS, peermem) |
 | `NVIDIA_NO_DRIVER` | `false` | 드라이버 설치 스킵 |

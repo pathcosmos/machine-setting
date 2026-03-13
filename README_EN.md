@@ -414,6 +414,7 @@ make recover           # Auto-recover broken components
 | `make uninstall` | Interactive uninstall |
 | `make uninstall-dry` | Preview what would be removed |
 | `make reset` | Reset state and start from scratch |
+| `make gpu-extras` | Install GPU extras only (system tools + kernel tuning, sudo). Use when driver/CUDA already installed |
 
 ### `aienv` Details
 
@@ -601,6 +602,7 @@ Stage [2/7] automatically installs the following system-level NVIDIA software:
 ./scripts/install-nvidia.sh                    # Full auto
 ./scripts/install-nvidia.sh --driver-only      # Driver only
 ./scripts/install-nvidia.sh --no-driver        # Skip driver (CUDA/cuDNN/NCCL only)
+./scripts/install-nvidia.sh --extras-only      # Extras only (system tools + kernel tuning, skip driver/CUDA). Same as make gpu-extras
 ./scripts/install-nvidia.sh --enterprise       # Include enterprise tools
 ./scripts/install-nvidia.sh --dry-run          # Preview installation (deep diagnostic)
 ./scripts/install-nvidia.sh --uninstall        # Remove entire NVIDIA stack
@@ -626,7 +628,7 @@ Stage [2/7] automatically installs the following system-level NVIDIA software:
 |---------|---------|-------------|
 | `INSTALL_NVIDIA` | `true` | Enable/disable entire NVIDIA stage |
 | `NVIDIA_DRIVER_VERSION` | `""` (auto) | Driver version (empty = auto-recommend) |
-| `NVIDIA_CUDA_VERSION` | `""` (latest) | CUDA version |
+| `NVIDIA_CUDA_VERSION` | `"13-0"` (CUDA 13.0) | CUDA version. Use e.g. `"12-6"` in machine.conf for older GPUs |
 | `NVIDIA_OPEN_KERNEL` | `auto` | Open/proprietary kernel module selection |
 | `NVIDIA_ENTERPRISE` | `false` | Enterprise tools (DCGM, FM, GDS, peermem) |
 | `NVIDIA_NO_DRIVER` | `false` | Skip driver installation |
