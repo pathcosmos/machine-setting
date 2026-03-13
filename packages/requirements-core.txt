@@ -1,7 +1,6 @@
 # Core AI/ML packages (platform-independent)
 
 # === LLM Providers ===
-anthropic==0.84.0
 openai==2.24.0
 google-generativeai==0.8.6
 google-ai-generativelanguage==0.6.15
@@ -218,6 +217,5 @@ groovy==0.1.2
 # === Google Auth ===
 pyasn1==0.4.8
 pyasn1-modules==0.2.8
-oauthlib==3.2.2
 uritemplate==4.2.0
 httplib2==0.20.4

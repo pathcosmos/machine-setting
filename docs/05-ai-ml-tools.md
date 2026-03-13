@@ -2,28 +2,7 @@
 
 > 최종 점검일: 2026-03-03
 
-## 1. Claude Code
-
-| 항목 | 값 |
-|------|-----|
-| 버전 | 2.1.63 |
-| 경로 | /home/user/.local/bin/claude |
-| 설정 디렉토리 | ~/.claude/ |
-
-### 설정 파일
-
-SuperClaude 프레임워크 구성:
-- `CLAUDE.md` - 진입점
-- `COMMANDS.md` - 명령어 프레임워크
-- `FLAGS.md` - 플래그 레퍼런스
-- `PRINCIPLES.md` - 핵심 원칙
-- `RULES.md` - 실행 규칙
-- `MCP.md` - MCP 서버 통합
-- `PERSONAS.md` - 페르소나 시스템
-- `ORCHESTRATOR.md` - 라우팅 시스템
-- `MODES.md` - 운영 모드
-
-## 2. Ollama
+## 1. Ollama
 
 | 항목 | 값 |
 |------|-----|
@@ -54,7 +33,7 @@ ollama list
 
 - `snap.ollama.listener.service` → enabled
 
-## 3. RAG 인프라
+## 2. RAG 인프라
 
 ### ChromaDB (벡터 데이터베이스)
 
@@ -74,7 +53,7 @@ ollama list
 | 포트 | 5433 |
 | 상태 | Running |
 
-## 4. n8n (AI 워크플로우)
+## 3. n8n (AI 워크플로우)
 
 | 항목 | 값 |
 |------|-----|
@@ -84,7 +63,7 @@ ollama list
 
 AI Agent 워크플로우 자동화에 활용 가능.
 
-## 5. CUDA/cuDNN (ML 가속)
+## 4. CUDA/cuDNN (ML 가속)
 
 GPU 기반 머신러닝을 위한 CUDA 스택 설치 완료.
 상세 내용은 [01-nvidia-gpu-cuda.md](./01-nvidia-gpu-cuda.md) 참조.
@@ -109,11 +88,10 @@ Docker 컨테이너에서 GPU 사용을 위한 런타임.
 nvidia/cuda:13.0.0-base-ubuntu24.04 (411MB)
 ```
 
-## 6. 현재 상태 및 제한사항
+## 5. 현재 상태 및 제한사항
 
 | 항목 | 상태 | 비고 |
 |------|------|------|
-| Claude Code | ✅ 정상 | SuperClaude 설정 완료 |
 | Ollama | ⚠️ 비활성 | snap start 필요 |
 | ChromaDB | ✅ 실행 중 | 포트 8081 |
 | pgvector | ✅ 실행 중 | 포트 5433 |
