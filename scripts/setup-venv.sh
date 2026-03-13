@@ -230,6 +230,7 @@ if not backends:
 print(f'    torch {torch.__version__} ({", ".join(backends)})')
 " 2>/dev/null || echo "    torch: not installed"
 "$VENV_PATH/bin/python" -c "import transformers; print(f'    transformers {transformers.__version__}')" 2>/dev/null || echo "    transformers: not installed"
+"$VENV_PATH/bin/python" -c "import anthropic; print(f'    anthropic {anthropic.__version__}')" 2>/dev/null || echo "    anthropic: not installed"
 
 echo ""
 echo "Done! Activate with: source $VENV_PATH/bin/activate"

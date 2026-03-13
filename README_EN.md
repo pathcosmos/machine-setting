@@ -191,7 +191,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 
 | Category | Packages | Description |
 |----------|----------|-------------|
-| **LLM Providers** | `openai`, `google-generativeai` + 7 Google API packages | GPT, Gemini APIs |
+| **LLM Providers** | `anthropic`, `openai`, `google-generativeai` + 7 Google API packages | Claude, GPT, Gemini APIs |
 | **LangChain** | `langchain`, `langchain-community`, `langchain-core`, `langchain-huggingface`, `langgraph`, `langgraph-checkpoint`, `langgraph-prebuilt`, `langgraph-sdk`, `langsmith` | Agents/chains/graphs |
 | **HuggingFace** | `transformers`, `datasets`, `tokenizers`, `huggingface_hub`, `accelerate`, `peft`, `trl`, `sentence-transformers`, `safetensors`, `hf-xet`, `sentencepiece` | Model training/inference/fine-tuning |
 | **Classical ML** | `scikit-learn`, `scipy`, `xgboost`, `lightgbm`, `numba`, `llvmlite` | Traditional machine learning |
@@ -240,7 +240,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | Category | Packages | Description |
 |----------|----------|-------------|
 | **Frameworks** | `fastapi`, `starlette`, `uvicorn`, `uvloop`, `Flask`, `Werkzeug`, `gradio`, `gradio_client` | REST API/UI servers |
-| **HTTP Clients** | `httpx`, `httpx-sse`, `httpcore`, `requests`, `aiohttp` | Sync/async HTTP |
+| **HTTP Clients** | `httpx`, `httpx-sse`, `httpcore`, `requests`, `requests-oauthlib`, `aiohttp` | Sync/async HTTP |
 | **Server Utilities** | `h11`, `httptools`, `websockets`, `websocket-client`, `watchfiles`, `python-multipart` | High-performance server/WebSocket |
 | **Templating** | `Jinja2`, `MarkupSafe`, `itsdangerous` | HTML rendering |
 | **Auth/Security** | `PyJWT`, `bcrypt`, `cryptography`, `pyOpenSSL` | JWT/encryption/TLS |
@@ -843,7 +843,7 @@ Checks the following items:
 | uv | uv installation and version |
 | Python | uv-managed Python exists |
 | Virtual environment | venv directory, bin/python, bin/activate exist |
-| Key packages | torch, transformers importable |
+| Key packages | torch, transformers, anthropic importable |
 | Node.js | NVM + Node installation status (if selected) |
 | Java | SDKMAN + Java installation status (if selected) |
 | Shell integration | Marker block exists in .bashrc/.zshrc |
@@ -864,7 +864,7 @@ Output example:
   [OK]   uv (uv 0.5.14)
   [OK]   Python (Python 3.12.8)
   [OK]   Virtual environment (~/ai-env, 247 packages)
-  [OK]   Key packages (torch: ok, transformers: ok)
+  [OK]   Key packages (torch: ok, transformers: ok, anthropic: ok)
   [OK]   Node.js (v22.12.0)
   [SKIP] Java (not installed)
   [OK]   Shell integration (.bashrc .zshrc)
@@ -1043,6 +1043,7 @@ Store API keys and secrets in `~/.bashrc.local` (or `~/.zshrc.local`):
 
 ```bash
 # ~/.bashrc.local (example)
+export ANTHROPIC_API_KEY="sk-ant-..."
 export OPENAI_API_KEY="sk-..."
 export WANDB_API_KEY="..."
 ```
