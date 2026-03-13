@@ -187,7 +187,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 
 **Disk requirements:** Minimum 15GB free space recommended (with GPU packages)
 
-#### core — Core AI/ML (`requirements-core.txt`, ~150 packages)
+#### core — Core AI/ML (`requirements-core.txt`, ~160 packages)
 
 | Category | Packages | Description |
 |----------|----------|-------------|
@@ -200,10 +200,11 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | **Experiment Tracking** | `wandb`, `mlflow`, `tensorboard`, `optuna` | Experiment tracking/hyperparameter optimization |
 | **Scientific** | `sympy`, `mpmath`, `networkx`, `shapely`, `h5py` | Math/graph/geo/HDF5 |
 | **Audio** | `pydub`, `ffmpy` | Audio processing/conversion |
+| **Testing** | `pytest`, `pytest-asyncio` | Unit/async testing |
 | **NLP/Text** | `regex`, `python-bidi`, `Markdown`, `markdown-it-py`, `rich`, `Pygments` | Text processing/rendering |
-| **Utilities** | `pydantic`, `pydantic-settings`, `python-dotenv`, `click`, `typer`, `loguru`, `structlog`, `tqdm`, `tenacity`, `backoff` | Config/CLI/logging/retry |
+| **Utilities** | `pydantic`, `pydantic-settings`, `python-dotenv`, `click`, `typer`, `loguru`, `structlog`, `tqdm`, `coloredlogs`, `humanfriendly`, `prettytable`, `py-cpuinfo`, `tenacity`, `backoff` | Config/CLI/logging/retry |
 | **Async** | `anyio`, `aiofiles`, `aiohappyeyeballs`, `aiosignal`, `frozenlist`, `multidict`, `yarl` | Async IO |
-| **Serialization** | `typing_extensions`, `marshmallow`, `dataclasses-json`, `jsonschema`, `jsonpatch`, `PyYAML` | Schema/serialization |
+| **Serialization** | `typing_extensions`, `marshmallow`, `dataclasses-json`, `jsonschema`, `jsonpatch`, `PyYAML`, `ruamel.yaml` | Schema/serialization (YAML comment-preserving) |
 | **gRPC/Protobuf** | `grpcio`, `grpcio-status`, `proto-plus`, `protobuf` | RPC communication |
 | **Monitoring** | `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-grpc` + 3 more, `posthog` | Telemetry/analytics |
 | **Infra** | `kubernetes`, `GitPython`, `APScheduler`, `psutil`, `watchdog` | K8s/Git/scheduling |
@@ -222,7 +223,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 
 > **Note:** `nvidia-*` runtime libraries are auto-resolved as `torch` dependencies and not pinned here. Pinning them breaks cross-CUDA-version compatibility.
 
-#### data — Data Processing (`requirements-data.txt`, ~35 packages)
+#### data — Data Processing (`requirements-data.txt`, ~40 packages)
 
 | Category | Packages | Description |
 |----------|----------|-------------|
@@ -231,9 +232,13 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | **Document Processing** | `pdfplumber`, `pdfminer.six`, `pypdf`, `pypdfium2`, `python-docx`, `python-pptx`, `openpyxl`, `xlsxwriter`, `lxml` | PDF/Word/Excel/PPT parsing |
 | **Image** | `pillow`, `opencv-python`, `opencv-python-headless`, `scikit-image`, `ImageIO` | Image processing/CV |
 | **OCR** | `easyocr`, `pytesseract` | Optical character recognition |
-| **Serialization** | `orjson`, `ormsgpack`, `jsonlines` | High-speed JSON/MsgPack |
+| **Scraping** | `beautifulsoup4` | HTML parsing/web scraping |
+| **Statistics/Explainability** | `statsmodels`, `shap` | Statistical models/explainability |
+| **Serialization** | `orjson`, `ormsgpack`, `jsonlines`, `ujson` | High-speed JSON/MsgPack |
 | **Messaging** | `aiokafka`, `kafka-python`, `paho-mqtt` | Kafka/MQTT streaming |
 | **Cloud Storage** | `boto3`, `botocore`, `s3transfer` | AWS S3 |
+
+Optional (install on demand): `paddleocr`, `paddlepaddle`, `paddlex`, `opencv-contrib-python`, `ultralytics` — see comment at bottom of `requirements-data.txt`.
 
 #### web — Web/API (`requirements-web.txt`, ~25 packages)
 
@@ -260,7 +265,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | `torch`, `torchaudio`, `torchvision` | Default PyPI builds (MPS included) |
 | `onnxruntime` | CPU inference engine (no GPU version on macOS) |
 
-**Installation combo example:** GPU workstation = `core` + `gpu` + `data` + `web` ≈ **230+ packages**
+**Installation combo example:** GPU workstation = `core` + `gpu` + `data` + `web` ≈ **240+ packages**
 
 ### [5/7] Node.js (optional)
 
@@ -1109,6 +1114,7 @@ machine_setting/
 │   ├── laptop.conf
 │   └── minimal.conf
 └── docs/                       # System documentation
+    └── package-candidates-analysis.md   # Package candidates analysis (recommended/optional/skip)
 ```
 
 ---
