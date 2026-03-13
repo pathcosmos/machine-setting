@@ -45,7 +45,5 @@ Thumbs.db
 *.log
 logs/
 
-# === Claude Code (keep .claude/settings.json only) ===
-.claude/**
-!.claude/
-!.claude/settings.json
+# === Local AI client artifacts ===
+.claude/

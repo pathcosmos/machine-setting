@@ -30,7 +30,7 @@ GPU_PATTERNS='nvidia-|cuda-|torch==.*\+cu|torchaudio==.*\+cu|torchvision==.*\+cu
 DATA_PATTERNS='pandas==|pyarrow==|SQLAlchemy==|alembic==|psycopg2|PyMySQL==|oracledb==|cx-Oracle==|clickhouse-|pdfplumber==|pdfminer|pypdf==|pypdfium2==|python-docx==|python-pptx==|openpyxl==|xlsxwriter==|lxml==|pillow==|opencv-|scikit-image==|ImageIO==|easyocr==|pytesseract==|orjson==|ormsgpack==|jsonlines==|aiokafka==|kafka-python==|paho-mqtt==|boto3==|botocore==|s3transfer=='
 
 # Web packages
-WEB_PATTERNS='fastapi==|starlette==|uvicorn==|uvloop==|Flask==|Werkzeug==|gradio|httpx|httpcore==|requests==|requests-oauthlib==|requests-toolbelt==|urllib3==|aiohttp==|h11==|httptools==|websockets==|websocket-client==|watchfiles==|python-multipart==|Jinja2==|MarkupSafe==|itsdangerous==|PyJWT==|bcrypt==|cryptography==|pyOpenSSL==|prometheus_client==|sentry-sdk=='
+WEB_PATTERNS='fastapi==|starlette==|uvicorn==|uvloop==|Flask==|Werkzeug==|gradio|httpx|httpcore==|requests==|requests-toolbelt==|urllib3==|aiohttp==|h11==|httptools==|websockets==|websocket-client==|watchfiles==|python-multipart==|Jinja2==|MarkupSafe==|itsdangerous==|PyJWT==|bcrypt==|cryptography==|pyOpenSSL==|prometheus_client==|sentry-sdk=='
 
 # System packages to exclude (Ubuntu system packages, not pip-installed)
 EXCLUDE_PATTERNS='bcc==|cloud-init==|command-not-found==|configobj==|dbus-python==|distro-info==|gpg==|launchpadlib==|lazr\.|netifaces==|PyGObject==|PyHamcrest==|python-apt==|python-debian==|screen-resolution-extra==|service-identity==|sos==|ssh-import-id==|systemd-python==|Twisted==|ubuntu-|ufw==|unattended-upgrades==|xkit==|Automat==|constantly==|hyperlink==|incremental==|zope\.|Babel==|blinker==|netaddr=='

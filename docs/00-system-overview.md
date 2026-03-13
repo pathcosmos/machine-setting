@@ -58,7 +58,7 @@ nvme1n1 (1.8T) - NVMe SSD (2TB)
 | [02-docker.md](./02-docker.md) | Docker, Docker Compose, NVIDIA Container Toolkit |
 | [03-docker-services.md](./03-docker-services.md) | Docker 컨테이너 서비스 현황 |
 | [04-development-tools.md](./04-development-tools.md) | 개발 도구 (Python, Node.js, Java, Git 등) |
-| [05-ai-ml-tools.md](./05-ai-ml-tools.md) | AI/ML 도구 (Ollama, Claude Code) |
+| [05-ai-ml-tools.md](./05-ai-ml-tools.md) | AI/ML 도구 (Ollama 등) |
 | [06-system-services.md](./06-system-services.md) | 시스템 서비스 및 인프라 |
 | [07-apt-repositories.md](./07-apt-repositories.md) | APT 저장소 및 패키지 소스 |
 | [08-issues-and-todos.md](./08-issues-and-todos.md) | 알려진 이슈 및 해결 과제 |

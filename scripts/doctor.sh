@@ -165,7 +165,7 @@ check_key_packages() {
     local results=()
     local has_fail=false
 
-    for pkg in torch transformers anthropic; do
+    for pkg in torch transformers; do
         if "$VENV_PATH/bin/python" -c "import $pkg" 2>/dev/null; then
             results+=("$pkg: ok")
         else
