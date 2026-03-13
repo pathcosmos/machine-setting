@@ -37,10 +37,18 @@ ImageIO==2.37.2
 easyocr==1.7.2
 pytesseract==0.3.13
 
+# Scraping & parsing
+beautifulsoup4
+
+# Statistics & explainability
+statsmodels
+shap
+
 # Serialization
 orjson==3.11.7
 ormsgpack==1.12.2
 jsonlines==4.0.0
+ujson
 
 # Messaging/streaming
 aiokafka==0.13.0
@@ -56,3 +64,5 @@ connectorx
 boto3==1.34.46
 botocore==1.34.46
 s3transfer==0.10.1
+
+# Optional (install on demand): paddleocr, paddlepaddle, paddlex; opencv-contrib-python; ultralytics
