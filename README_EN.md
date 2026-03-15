@@ -4,7 +4,7 @@
 
 Portable AI development environment system. One command to set up Python + AI/ML packages + optional Node.js/Java on any machine, with automatic GPU/CPU detection and cross-machine sync.
 
-**Supported platforms**: Linux (x86_64, NVIDIA CUDA) + macOS (Apple Silicon M1+, MPS)
+**Supported platforms**: Linux (x86_64, NVIDIA CUDA) + macOS (Apple Silicon M1+, MPS) + Cloud/Container (Docker, K8s, AWS/GCP/Azure)
 **Supported shells**: bash + zsh
 
 ---
@@ -39,6 +39,9 @@ Portable AI development environment system. One command to set up Python + AI/ML
 # New machine setup (Linux or macOS)
 git clone https://github.com/pathcosmos/machine-setting.git ~/machine_setting
 cd ~/machine_setting && ./setup.sh
+
+# Cloud/container setup (user-space only, no sudo needed)
+./setup.sh --cloud
 
 # Activate AI environment
 aienv
@@ -99,16 +102,19 @@ Auto-detects system hardware and saves results to `~/.machine_setting_profile`.
 
 | Detection | Linux | macOS |
 |-----------|-------|-------|
-| GPU | `lspci` + `nvidia-smi` | `system_profiler` (Apple Silicon) |
+| GPU | `lspci` + `nvidia-smi` (fallback) | `system_profiler` (Apple Silicon) |
 | CUDA version | `nvcc --version` / `nvidia-smi` | N/A (uses MPS) |
 | CPU/RAM | `/proc/cpuinfo`, `/proc/meminfo` | `sysctl` |
 | NGC container | torch NV version check + `/opt/nvidia` exists | N/A |
+| Cloud/Container | Docker, K8s, cgroup, cloud VM vendor, sudo availability | N/A |
+
+> **Container GPU detection:** GPU is detected via `nvidia-smi` fallback even in containers without `lspci`.
 
 Optimal profile is auto-selected based on detection results:
-- NVIDIA GPU (Datacenter) -> `gpu-enterprise`
-- NVIDIA GPU -> `gpu-workstation`
 - Apple Silicon -> `mac-apple-silicon`
 - NGC container -> `ngc-container`
+- Cloud/Container environment -> `cloud-server`
+- NVIDIA GPU -> `gpu-workstation`
 - RAM >= 32GB (no GPU) -> `cpu-server`
 - RAM >= 8GB -> `laptop`
 - Otherwise -> `minimal`
@@ -414,13 +420,15 @@ make recover           # Auto-recover broken components
 | `make uninstall` | Interactive uninstall |
 | `make uninstall-dry` | Preview what would be removed |
 | `make reset` | Reset state and start from scratch |
+| `make cloud` | Cloud/container setup (user-space only, no sudo needed) |
 | `make gpu-extras` | Install GPU extras only (system tools + kernel tuning, sudo). Use when driver/CUDA already installed |
 
 ### `aienv` Details
 
 1. Runs `~/ai-env/bin/activate` (venv activation)
 2. Sets `NVIDIA_TF32_OVERRIDE=1` (FP32 ~2x acceleration on Ampere+ GPUs)
-3. Starts **background update check**:
+3. In cloud/container without nvcc: sets `DS_BUILD_OPS=0` (disables DeepSpeed JIT compilation)
+4. Starts **background update check**:
    - Runs `git fetch origin main` every 24 hours
    - Shows update notification if local differs from remote
    - Runs fully in background with no impact on shell speed
@@ -429,21 +437,38 @@ make recover           # Auto-recover broken components
 
 ```
 === AI Environment Check ===
-  Venv: /home/user/ai-env
-  Python: Python 3.12.8
+  Venv: /root/ai-env
+  Python: Python 3.12.13
 
-  Installed packages: 247
+  Installed packages: 379
 
 --- Core Packages ---
-  OK  transformers 4.47.0
-  OK  datasets 3.2.0
-  OK  accelerate 1.2.1
+  OK  transformers 4.57.6
+  OK  datasets 4.6.1
+  OK  accelerate 1.12.0
   ...
 
+--- GPU Stack ---
+  torch 2.10.0+cu128 (CUDA 12.8, 1 GPU(s), NVIDIA H100 PCIe)
+  cuDNN 91002 (enabled=True)
+  NCCL 2.27.5
+
 --- GPU Packages ---
-  torch 2.5.1+cu126 (CUDA 12.6, 2 GPU(s), NVIDIA RTX 4090)
-  flash_attn 2.7.2
-  bitsandbytes 0.45.0
+  bitsandbytes 0.49.2
+  triton 3.6.0
+  vllm 0.17.1
+  deepspeed 0.18.8
+
+--- GPU Functional Test ---
+  matmul (512x512): OK
+  cuDNN conv2d:     OK
+  GPU memory:       39.4 GB
+  Compute cap:      (9, 0)
+
+--- Environment ---
+  Container: yes
+  nvcc: stub (runtime only, no JIT compile)
+  Display: headless (no libGL)
 ```
 
 ---
@@ -546,6 +571,7 @@ make preflight
 | `--node` / `--no-node` | Install/skip Node.js |
 | `--java` / `--no-java` | Install/skip Java |
 | `--profile <name>` | Use profile |
+| `--cloud` | Cloud/container mode (skip driver/CUDA/kernel tuning) |
 | `--dry-run` | Full system dry-run diagnostic (all 7 stages) |
 | `--plan` | Run pre-flight check only |
 | `--preflight` | Pre-flight check then install |
@@ -565,6 +591,7 @@ make preflight
 | gpu-enterprise | Linux | CUDA (Enterprise) | Full + DCGM/FM/GDS | No | No | core+data+web+gpu |
 | ngc-container | NGC/Linux | CUDA (NV symlink) | Skip (pre-installed) | No | No | core+data+web+nv-link |
 | gpu-workstation | Linux | CUDA | Full (consumer) | Yes | Yes | core+data+web+gpu |
+| cloud-server | Cloud/Container | CUDA (host-provided) | Skip (user-space only) | Yes | Yes | core+data+web+gpu |
 | mac-apple-silicon | macOS | MPS | Skip (N/A) | Yes | No | core+data+web+mps |
 | cpu-server | Linux | None | Skip (no GPU) | Yes | Yes | core+data+web+cpu |
 | laptop | Any | None | Skip (no GPU) | Yes | No | core+data+web+cpu |
@@ -586,6 +613,7 @@ cp config/machine.conf.example config/machine.conf
 | Platform | GPU | Backend | Auto-detection |
 |----------|-----|---------|----------------|
 | NGC container | NVIDIA | CUDA (NV custom build symlink) | torch version check |
+| Cloud/Container | NVIDIA | CUDA (host driver) | Docker/K8s/VM vendor detection + nvidia-smi |
 | Linux | NVIDIA | CUDA (cu131, cu130, cu126, etc.) | lspci + nvcc |
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
 | Any | None | CPU fallback | Auto |
@@ -670,6 +698,37 @@ How it works:
 1. Detects system site-packages path (e.g., `/usr/local/lib/python3.12/dist-packages`)
 2. Symlinks target package directories to venv's site-packages
 3. Also symlinks `.dist-info` directories (so pip recognizes the packages)
+
+> **Python version mismatch detection:** If system Python (e.g. 3.10) differs from venv Python (e.g. 3.12), NV link is automatically skipped and GPU packages are installed via pip instead.
+
+### Cloud/Container Mode
+
+Installs only user-space tools when host provides GPU drivers (Docker, Kubernetes, cloud VMs).
+
+```bash
+# Auto-detect (activates automatically in container/cloud environments)
+./setup.sh
+
+# Explicit
+./setup.sh --cloud
+make cloud
+```
+
+**Auto-detection triggers:**
+- `/.dockerenv` or `/run/.containerenv` exists
+- cgroup contains `docker`/`containerd`/`kubepods` markers
+- `KUBERNETES_SERVICE_HOST` environment variable set
+- DMI vendor is AWS/GCP/Azure/DigitalOcean/Vultr/Oracle
+- sudo command unavailable or access denied
+
+**Skipped in cloud mode:** NVIDIA driver/CUDA toolkit install, kernel tuning (sysctl, limits), system packages (apt-get)
+
+**Installed in cloud mode:** Hardware detection (read-only), Python (uv), AI venv (GPU packages included — uses host CUDA runtime), Node.js (nvm), Java (sdkman), shell integration
+
+**Cloud-specific adaptations:**
+- **Headless containers**: installs `opencv-python-headless` only (skips `opencv-python` when `libGL` is missing)
+- **Runtime-only containers**: creates nvcc stub for DeepSpeed import compatibility
+- **`aienv` activation**: sets `DS_BUILD_OPS=0` when nvcc is unavailable
 
 ---
 
@@ -842,41 +901,48 @@ Checks the following items:
 |------------|-----------------|
 | Disk space | At least 1GB free at venv path |
 | Hardware profile | `~/.machine_setting_profile` exists and is valid |
+| Cloud environment | Cloud/container detection (Docker, K8s, cloud VM, sudo availability) |
 | NVIDIA driver | Driver loaded, `nvidia-smi` functional |
-| CUDA toolkit | `nvcc` exists and version, `/usr/local/cuda` symlink |
-| cuDNN | cuDNN library installation status |
-| NCCL | NCCL library installation status |
-| GPU kernel tuning | sysctl parameters (vm.max_map_count, etc.) applied |
+| CUDA toolkit | `nvcc` exists and version (detects stub vs real nvcc) |
+| cuDNN | dpkg status + **torch.backends.cudnn runtime verification** |
+| NCCL | dpkg status + **torch.cuda.nccl runtime verification** |
+| GPU kernel tuning | sysctl parameters applied (auto-skipped in cloud) |
 | uv | uv installation and version |
 | Python | uv-managed Python exists |
 | Virtual environment | venv directory, bin/python, bin/activate exist |
-| Key packages | torch, transformers, anthropic importable |
+| Key packages | **26** core packages import test (torch, transformers, anthropic, fastapi, pandas, etc.) |
+| GPU packages | **7** GPU-specific packages (vllm, deepspeed, bitsandbytes, pytorch_lightning, etc.) |
+| GPU functional | **GPU compute test** — matmul, cuDNN conv2d, NCCL availability |
 | Node.js | NVM + Node installation status (if selected) |
 | Java | SDKMAN + Java installation status (if selected) |
 | Shell integration | Marker block exists in .bashrc/.zshrc |
 | Platform | Xcode CLT (macOS) |
 
-Output example:
+Output example (Cloud/Container):
 
 ```
 === Machine Setting Doctor ===
 
-  [OK]   Disk space (2847GB free)
+  [OK]   Disk space (1497GB free)
   [OK]   Hardware profile
-  [OK]   NVIDIA driver (560.35.03)
-  [OK]   CUDA toolkit (12.6, /usr/local/cuda)
-  [OK]   cuDNN (9.x)
-  [OK]   NCCL (2.x)
-  [OK]   GPU kernel tuning (vm.max_map_count=1048576)
-  [OK]   uv (uv 0.5.14)
-  [OK]   Python (Python 3.12.8)
-  [OK]   Virtual environment (~/ai-env, 247 packages)
-  [OK]   Key packages (torch: ok, transformers: ok, anthropic: ok)
-  [OK]   Node.js (v22.12.0)
+  [OK]   Cloud environment (container detected)
+  [OK]   NVIDIA driver (535.129.03, NVIDIA H100 PCIe)
+  [WARN] CUDA Toolkit (stub nvcc 12.2 — runtime only, no JIT compile)
+  [OK]   cuDNN (system: 8.9.6, torch: enabled v91002)
+  [OK]   NCCL (system: 2.19.3, torch: 2.27.5)
+  [SKIP] GPU kernel tuning (cloud/container — managed by host)
+  [OK]   uv (uv 0.10.10)
+  [OK]   Python (Python 3.12.13)
+  [OK]   Virtual environment (~/ai-env, 379 packages)
+  [OK]   Key packages (OK 26/26)
+  [OK]   GPU packages (OK 7/7)
+  [OK]   GPU functional (OK (NVIDIA H100 PCIe, cuDNN 91002, NCCL ok))
+  [SKIP] Node.js (not installed)
   [SKIP] Java (not installed)
-  [OK]   Shell integration (.bashrc .zshrc)
+  [OK]   Shell integration (.bashrc)
+  [OK]   Platform (Linux)
 
-Summary: 13 ok, 0 failed, 0 warnings, 1 skipped
+Summary: 12 ok, 0 failed, 0 warnings, 4 skipped
 All checks passed!
 ```
 
@@ -1110,6 +1176,7 @@ machine_setting/
 ├── profiles/                   # Pre-configured machine profiles
 │   ├── gpu-enterprise.conf      # A100/H100/B200 + enterprise tools (DCGM, FM)
 │   ├── gpu-workstation.conf
+│   ├── cloud-server.conf
 │   ├── mac-apple-silicon.conf
 │   ├── ngc-container.conf
 │   ├── cpu-server.conf
