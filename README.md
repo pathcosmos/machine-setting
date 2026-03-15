@@ -4,7 +4,7 @@
 
 Portable AI development environment system. One command to set up Python + AI/ML packages + optional Node.js/Java on any machine, with automatic GPU/CPU detection and cross-machine sync.
 
-**Supported platforms**: Linux (x86_64, NVIDIA CUDA) + macOS (Apple Silicon M1+, MPS)
+**Supported platforms**: Linux (x86_64, NVIDIA CUDA) + macOS (Apple Silicon M1+, MPS) + Cloud/Container (Docker, K8s, AWS/GCP/Azure)
 **Supported shells**: bash + zsh
 
 ---
@@ -39,6 +39,9 @@ Portable AI development environment system. One command to set up Python + AI/ML
 # New machine setup (Linux or macOS)
 git clone https://github.com/pathcosmos/machine-setting.git ~/machine_setting
 cd ~/machine_setting && ./setup.sh
+
+# Cloud/container setup (sudo 없이 user-space만 설치)
+./setup.sh --cloud
 
 # Activate AI environment
 aienv
@@ -99,16 +102,19 @@ STAGE_7_SHELL=pending
 
 | 감지 항목 | Linux | macOS |
 |-----------|-------|-------|
-| GPU | `lspci` + `nvidia-smi` | `system_profiler` (Apple Silicon) |
+| GPU | `lspci` + `nvidia-smi` (fallback) | `system_profiler` (Apple Silicon) |
 | CUDA 버전 | `nvcc --version` / `nvidia-smi` | N/A (MPS 사용) |
 | CPU/RAM | `/proc/cpuinfo`, `/proc/meminfo` | `sysctl` |
 | NGC 컨테이너 | torch NV 버전 체크 + `/opt/nvidia` 존재 | N/A |
+| Cloud/Container | Docker, K8s, cgroup, 클라우드 VM 벤더, sudo 가용성 | N/A |
+
+> **컨테이너 GPU 감지:** `lspci`가 없는 컨테이너에서도 `nvidia-smi` fallback으로 GPU를 정상 감지합니다.
 
 감지 결과에 따라 최적 프로필이 자동 선택됩니다:
-- NVIDIA GPU (Datacenter) → `gpu-enterprise`
-- NVIDIA GPU → `gpu-workstation`
 - Apple Silicon → `mac-apple-silicon`
 - NGC 컨테이너 → `ngc-container`
+- Cloud/Container 환경 → `cloud-server`
+- NVIDIA GPU → `gpu-workstation`
 - RAM ≥ 32GB (GPU 없음) → `cpu-server`
 - RAM ≥ 8GB → `laptop`
 - 그 외 → `minimal`
@@ -414,13 +420,15 @@ make recover           # Auto-recover broken components
 | `make uninstall` | 대화형 삭제 |
 | `make uninstall-dry` | 삭제 미리보기 |
 | `make reset` | 상태 초기화 후 처음부터 |
+| `make cloud` | Cloud/container 설치 (user-space only, sudo 불필요) |
 | `make gpu-extras` | GPU 보조만 설치 (시스템 유틸 + 커널 튜닝, sudo). 드라이버/CUDA는 이미 있을 때 사용 |
 
 ### `aienv` 동작 상세
 
 1. `~/ai-env/bin/activate` 실행 (venv 활성화)
 2. `NVIDIA_TF32_OVERRIDE=1` 설정 (Ampere+ GPU에서 FP32 연산 ~2x 가속)
-3. **백그라운드 업데이트 체크** 시작:
+3. Cloud/container에서 nvcc 없으면 `DS_BUILD_OPS=0` 자동 설정 (DeepSpeed JIT 컴파일 비활성)
+4. **백그라운드 업데이트 체크** 시작:
    - 24시간마다 `git fetch origin main` 실행
    - 로컬과 리모트가 다르면 업데이트 알림 출력
    - 완전히 백그라운드로 실행되어 셸 속도에 영향 없음
@@ -429,21 +437,38 @@ make recover           # Auto-recover broken components
 
 ```
 === AI Environment Check ===
-  Venv: /home/user/ai-env
-  Python: Python 3.12.8
+  Venv: /root/ai-env
+  Python: Python 3.12.13
 
-  Installed packages: 247
+  Installed packages: 379
 
 --- Core Packages ---
-  OK  transformers 4.47.0
-  OK  datasets 3.2.0
-  OK  accelerate 1.2.1
+  OK  transformers 4.57.6
+  OK  datasets 4.6.1
+  OK  accelerate 1.12.0
   ...
 
+--- GPU Stack ---
+  torch 2.10.0+cu128 (CUDA 12.8, 1 GPU(s), NVIDIA H100 PCIe)
+  cuDNN 91002 (enabled=True)
+  NCCL 2.27.5
+
 --- GPU Packages ---
-  torch 2.5.1+cu126 (CUDA 12.6, 2 GPU(s), NVIDIA RTX 4090)
-  flash_attn 2.7.2
-  bitsandbytes 0.45.0
+  bitsandbytes 0.49.2
+  triton 3.6.0
+  vllm 0.17.1
+  deepspeed 0.18.8
+
+--- GPU Functional Test ---
+  matmul (512x512): OK
+  cuDNN conv2d:     OK
+  GPU memory:       39.4 GB
+  Compute cap:      (9, 0)
+
+--- Environment ---
+  Container: yes
+  nvcc: stub (runtime only, no JIT compile)
+  Display: headless (no libGL)
 ```
 
 ---
@@ -546,6 +571,7 @@ make preflight
 | `--node` / `--no-node` | Node.js 설치/미설치 |
 | `--java` / `--no-java` | Java 설치/미설치 |
 | `--profile <name>` | 프로필 사용 |
+| `--cloud` | Cloud/container 모드 (드라이버/CUDA/커널 튜닝 스킵) |
 | `--dry-run` | 전체 시스템 dry-run 진단 (7단계) |
 | `--plan` | Pre-flight check만 실행 |
 | `--preflight` | Pre-flight check 후 설치 |
@@ -565,6 +591,7 @@ make preflight
 | gpu-enterprise | Linux | CUDA (Enterprise) | Full + DCGM/FM/GDS | No | No | core+data+web+gpu |
 | ngc-container | NGC/Linux | CUDA (NV symlink) | Skip (pre-installed) | No | No | core+data+web+nv-link |
 | gpu-workstation | Linux | CUDA | Full (consumer) | Yes | Yes | core+data+web+gpu |
+| cloud-server | Cloud/Container | CUDA (호스트 제공) | Skip (user-space only) | Yes | Yes | core+data+web+gpu |
 | mac-apple-silicon | macOS | MPS | Skip (N/A) | Yes | No | core+data+web+mps |
 | cpu-server | Linux | None | Skip (no GPU) | Yes | Yes | core+data+web+cpu |
 | laptop | Any | None | Skip (no GPU) | Yes | No | core+data+web+cpu |
@@ -586,6 +613,7 @@ cp config/machine.conf.example config/machine.conf
 | Platform | GPU | Backend | 자동 감지 방법 |
 |----------|-----|---------|---------------|
 | NGC container | NVIDIA | CUDA (NV custom build symlink) | torch 버전 체크 |
+| Cloud/Container | NVIDIA | CUDA (호스트 드라이버 사용) | Docker/K8s/VM 벤더 감지 + nvidia-smi |
 | Linux | NVIDIA | CUDA (cu131, cu130, cu126 등) | lspci + nvcc |
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
 | Any | None | CPU fallback | 자동 |
@@ -670,6 +698,45 @@ scripts/setup-venv.sh --nv-link
 1. 시스템 site-packages 경로 감지 (예: `/usr/local/lib/python3.12/dist-packages`)
 2. 대상 패키지 디렉토리를 venv의 site-packages에 심볼릭 링크
 3. `.dist-info` 디렉토리도 함께 링크 (pip이 패키지를 인식하도록)
+
+> **Python 버전 불일치 감지:** 시스템 Python(예: 3.10)과 venv Python(예: 3.12)의 버전이 다르면 NV link가 자동으로 스킵되고, GPU 패키지를 pip으로 직접 설치하는 fallback이 동작합니다.
+
+### Cloud/Container Mode
+
+Docker, Kubernetes, 클라우드 VM 등 호스트가 GPU 드라이버를 제공하는 환경에서 user-space 도구만 설치합니다.
+
+```bash
+# 자동 감지 (컨테이너/클라우드 환경이면 자동 활성화)
+./setup.sh
+
+# 명시 지정
+./setup.sh --cloud
+make cloud
+```
+
+**자동 감지 조건:**
+- `/.dockerenv` 또는 `/run/.containerenv` 존재
+- cgroup에 `docker`/`containerd`/`kubepods` 마커
+- `KUBERNETES_SERVICE_HOST` 환경변수
+- DMI 벤더가 AWS/GCP/Azure/DigitalOcean/Vultr/Oracle
+- sudo 명령이 없거나 권한 없음
+
+**Cloud 모드에서 스킵:**
+- NVIDIA 드라이버/CUDA Toolkit 설치
+- 커널 튜닝 (sysctl, limits)
+- 시스템 패키지 (apt-get)
+
+**Cloud 모드에서 설치:**
+- Hardware Detection (읽기 전용, 호스트 GPU 인식)
+- Python (uv, user-space)
+- AI venv (GPU 패키지 포함 — 호스트 CUDA 런타임 사용)
+- Node.js (nvm), Java (sdkman)
+- Shell integration
+
+**Cloud 환경 추가 대응:**
+- **headless 컨테이너**: `libGL` 없으면 `opencv-python` 대신 `opencv-python-headless`만 설치
+- **nvcc 없는 런타임 컨테이너**: nvcc stub 자동 생성 (DeepSpeed import 호환)
+- **`aienv` 활성화 시**: nvcc 없으면 `DS_BUILD_OPS=0` 자동 설정
 
 ---
 
@@ -842,41 +909,48 @@ make doctor
 |-----------|-----------|
 | Disk space | venv 경로에 1GB 이상 여유 |
 | Hardware profile | `~/.machine_setting_profile` 존재 및 유효성 |
+| Cloud environment | Cloud/container 환경 감지 (Docker, K8s, 클라우드 VM, sudo 가용성) |
 | NVIDIA driver | 드라이버 로드 상태, `nvidia-smi` 동작 확인 |
-| CUDA toolkit | `nvcc` 존재 및 버전, `/usr/local/cuda` 심볼릭 링크 |
-| cuDNN | cuDNN 라이브러리 설치 상태 |
-| NCCL | NCCL 라이브러리 설치 상태 |
-| GPU kernel tuning | sysctl 파라미터 (vm.max_map_count 등) 적용 여부 |
+| CUDA toolkit | `nvcc` 존재 및 버전 (stub vs 실제 nvcc 구분) |
+| cuDNN | dpkg 설치 상태 + **torch.backends.cudnn 런타임 검증** |
+| NCCL | dpkg 설치 상태 + **torch.cuda.nccl 런타임 검증** |
+| GPU kernel tuning | sysctl 파라미터 적용 여부 (cloud에서는 자동 skip) |
 | uv | uv 설치 및 버전 |
 | Python | uv로 관리되는 Python 존재 |
 | Virtual environment | venv 디렉토리, bin/python, bin/activate 존재 |
-| Key packages | torch, transformers, anthropic import 가능 |
+| Key packages | **26개** 핵심 패키지 import 검증 (torch, transformers, anthropic, fastapi, pandas 등) |
+| GPU packages | **7개** GPU 전용 패키지 (vllm, deepspeed, bitsandbytes, pytorch_lightning 등) |
+| GPU functional | **GPU 연산 테스트** — matmul, cuDNN conv2d, NCCL 가용성 |
 | Node.js | NVM + Node 설치 상태 (설치 선택 시) |
 | Java | SDKMAN + Java 설치 상태 (설치 선택 시) |
 | Shell integration | .bashrc/.zshrc에 마커 블록 존재 |
 | Platform | Xcode CLT (macOS) |
 
-출력 예시:
+출력 예시 (Cloud/Container 환경):
 
 ```
 === Machine Setting Doctor ===
 
-  [OK]   Disk space (2847GB free)
+  [OK]   Disk space (1497GB free)
   [OK]   Hardware profile
-  [OK]   NVIDIA driver (560.35.03)
-  [OK]   CUDA toolkit (12.6, /usr/local/cuda)
-  [OK]   cuDNN (9.x)
-  [OK]   NCCL (2.x)
-  [OK]   GPU kernel tuning (vm.max_map_count=1048576)
-  [OK]   uv (uv 0.5.14)
-  [OK]   Python (Python 3.12.8)
-  [OK]   Virtual environment (~/ai-env, 247 packages)
-  [OK]   Key packages (torch: ok, transformers: ok, anthropic: ok)
-  [OK]   Node.js (v22.12.0)
+  [OK]   Cloud environment (container detected)
+  [OK]   NVIDIA driver (535.129.03, NVIDIA H100 PCIe)
+  [WARN] CUDA Toolkit (stub nvcc 12.2 — runtime only, no JIT compile)
+  [OK]   cuDNN (system: 8.9.6, torch: enabled v91002)
+  [OK]   NCCL (system: 2.19.3, torch: 2.27.5)
+  [SKIP] GPU kernel tuning (cloud/container — managed by host)
+  [OK]   uv (uv 0.10.10)
+  [OK]   Python (Python 3.12.13)
+  [OK]   Virtual environment (~/ai-env, 379 packages)
+  [OK]   Key packages (OK 26/26)
+  [OK]   GPU packages (OK 7/7)
+  [OK]   GPU functional (OK (NVIDIA H100 PCIe, cuDNN 91002, NCCL ok))
+  [SKIP] Node.js (not installed)
   [SKIP] Java (not installed)
-  [OK]   Shell integration (.bashrc .zshrc)
+  [OK]   Shell integration (.bashrc)
+  [OK]   Platform (Linux)
 
-Summary: 13 ok, 0 failed, 0 warnings, 1 skipped
+Summary: 12 ok, 0 failed, 0 warnings, 4 skipped
 All checks passed!
 ```
 
@@ -1110,6 +1184,7 @@ machine_setting/
 ├── profiles/                   # Pre-configured machine profiles
 │   ├── gpu-enterprise.conf      # A100/H100/B200 + enterprise tools (DCGM, FM)
 │   ├── gpu-workstation.conf
+│   ├── cloud-server.conf
 │   ├── mac-apple-silicon.conf
 │   ├── ngc-container.conf
 │   ├── cpu-server.conf
