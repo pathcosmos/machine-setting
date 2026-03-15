@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight gpu-extras
+.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -63,6 +63,9 @@ uninstall-dry: ## Show what would be removed
 
 reset: ## Reset install state and start fresh
 	$(REPO_DIR)/setup.sh --reset
+
+cloud: ## Cloud/container setup (user-space only, no sudo needed)
+	$(REPO_DIR)/setup.sh --cloud
 
 gpu-extras: ## Install GPU extras only (system tools + kernel tuning; sudo). Use when driver/CUDA already installed.
 	$(REPO_DIR)/scripts/install-nvidia.sh --extras-only

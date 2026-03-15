@@ -152,7 +152,7 @@ check_venv() {
         return
     fi
     local pkg_count
-    pkg_count=$("$VENV_PATH/bin/pip" list 2>/dev/null | tail -n +3 | wc -l | tr -d ' ')
+    pkg_count=$(uv pip list --python "$VENV_PATH/bin/python" 2>/dev/null | tail -n +3 | wc -l | tr -d ' ')
     status_ok "Virtual environment ($VENV_PATH, ${pkg_count} packages)"
 }
 
@@ -162,25 +162,196 @@ check_key_packages() {
         return
     fi
 
-    local results=()
-    local has_fail=false
+    local tmp_script result
+    tmp_script=$(mktemp /tmp/doctor_pkg_XXXXXX.py)
+    cat > "$tmp_script" << 'PYEOF'
+import warnings; warnings.filterwarnings("ignore")
+pkgs = [
+    ("torch", "torch"), ("transformers", "transformers"), ("anthropic", "anthropic"),
+    ("openai", "openai"), ("langchain", "langchain"), ("datasets", "datasets"),
+    ("accelerate", "accelerate"), ("peft", "peft"), ("trl", "trl"),
+    ("sentence_transformers", "sentence_transformers"),
+    ("fastapi", "fastapi"), ("flask", "flask"), ("gradio", "gradio"),
+    ("pandas", "pandas"), ("numpy", "numpy"), ("scipy", "scipy"),
+    ("sklearn", "sklearn"), ("pydantic", "pydantic"),
+    ("httpx", "httpx"), ("aiohttp", "aiohttp"), ("boto3", "boto3"),
+    ("sqlalchemy", "sqlalchemy"), ("requests", "requests"),
+    ("PIL", "PIL"), ("cv2", "cv2"),
+    ("wandb", "wandb"),
+]
+ok = 0
+fail_list = []
+for name, mod in pkgs:
+    try:
+        __import__(mod)
+        ok += 1
+    except Exception:
+        fail_list.append(name)
+total = len(pkgs)
+if fail_list:
+    shown = ", ".join(fail_list[:5])
+    suffix = "..." if len(fail_list) > 5 else ""
+    print(f"FAIL {ok}/{total} (missing: {shown}{suffix})")
+else:
+    print(f"OK {ok}/{total}")
+PYEOF
+    result=$("$VENV_PATH/bin/python" "$tmp_script" 2>/dev/null) || result="FAIL 0/0 (cannot run python)"
+    rm -f "$tmp_script"
 
-    for pkg in torch transformers anthropic; do
-        if "$VENV_PATH/bin/python" -c "import $pkg" 2>/dev/null; then
-            results+=("$pkg: ok")
-        else
-            results+=("$pkg: missing")
-            has_fail=true
-        fi
-    done
-
-    local summary
-    summary=$(IFS=', '; echo "${results[*]}")
-
-    if [ "$has_fail" = true ]; then
-        status_warn "Key packages ($summary)"
+    if [[ "$result" == OK* ]]; then
+        status_ok "Key packages ($result)"
     else
-        status_ok "Key packages ($summary)"
+        status_warn "Key packages ($result)"
+    fi
+}
+
+check_gpu_packages() {
+    if [ ! -x "$VENV_PATH/bin/python" ]; then
+        return
+    fi
+    if [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+
+    local tmp_script result
+    tmp_script=$(mktemp /tmp/doctor_gpu_XXXXXX.py)
+    cat > "$tmp_script" << 'PYEOF'
+import warnings; warnings.filterwarnings("ignore")
+pkgs = [
+    ("vllm", "vllm"), ("deepspeed", "deepspeed"), ("bitsandbytes", "bitsandbytes"),
+    ("pytorch_lightning", "pytorch_lightning"), ("optimum", "optimum"),
+    ("chromadb", "chromadb"), ("triton", "triton"),
+]
+ok = 0
+fail_list = []
+for name, mod in pkgs:
+    try:
+        __import__(mod)
+        ok += 1
+    except Exception:
+        fail_list.append(name)
+total = len(pkgs)
+if fail_list:
+    print(f"FAIL {ok}/{total} (missing: {', '.join(fail_list)})")
+else:
+    print(f"OK {ok}/{total}")
+PYEOF
+    result=$("$VENV_PATH/bin/python" "$tmp_script" 2>/dev/null) || result="FAIL 0/0"
+    rm -f "$tmp_script"
+
+    if [[ "$result" == OK* ]]; then
+        status_ok "GPU packages ($result)"
+    else
+        status_warn "GPU packages ($result)"
+    fi
+}
+
+check_gpu_functional() {
+    if [ ! -x "$VENV_PATH/bin/python" ]; then
+        return
+    fi
+    if [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+
+    local tmp_script result
+    tmp_script=$(mktemp /tmp/doctor_func_XXXXXX.py)
+    cat > "$tmp_script" << 'PYEOF'
+import warnings; warnings.filterwarnings("ignore")
+import torch
+errors = []
+
+if not torch.cuda.is_available():
+    errors.append("CUDA not available")
+else:
+    try:
+        a = torch.randn(256, 256, device="cuda")
+        b = torch.randn(256, 256, device="cuda")
+        c = torch.mm(a, b)
+        del a, b, c
+    except Exception as e:
+        errors.append("matmul: " + str(e))
+
+    if not torch.backends.cudnn.enabled:
+        errors.append("cuDNN disabled")
+    else:
+        try:
+            conv = torch.nn.Conv2d(3, 16, 3, padding=1).cuda()
+            x = torch.randn(1, 3, 32, 32, device="cuda")
+            _ = conv(x)
+            del conv, x
+        except Exception as e:
+            errors.append("cuDNN conv: " + str(e))
+
+    try:
+        if not torch.cuda.nccl.is_available(torch.randn(1).cuda()):
+            errors.append("NCCL not available")
+    except Exception:
+        errors.append("NCCL check failed")
+
+torch.cuda.empty_cache()
+
+if errors:
+    print("FAIL (" + "; ".join(errors) + ")")
+else:
+    gpu = torch.cuda.get_device_name(0)
+    cudnn_v = torch.backends.cudnn.version()
+    print(f"OK ({gpu}, cuDNN {cudnn_v}, NCCL ok)")
+PYEOF
+    result=$("$VENV_PATH/bin/python" "$tmp_script" 2>/dev/null) || result="FAIL (torch import error)"
+    rm -f "$tmp_script"
+
+    if [[ "$result" == OK* ]]; then
+        status_ok "GPU functional ($result)"
+    else
+        status_fail "GPU functional ($result)" "gpu_functional"
+    fi
+}
+
+check_cloud_environment() {
+    if [ "${IS_CLOUD:-false}" != "true" ]; then
+        return
+    fi
+
+    local issues=()
+
+    # Headless check
+    if [ "$(uname -s)" = "Linux" ] && ! ldconfig -p 2>/dev/null | grep -q libGL.so.1; then
+        # Verify headless opencv is usable
+        if [ -x "$VENV_PATH/bin/python" ]; then
+            if ! "$VENV_PATH/bin/python" -c "import cv2" 2>/dev/null; then
+                issues+=("cv2 broken (need headless variant)")
+            fi
+        fi
+    fi
+
+    # nvcc stub vs real
+    if [ -x /usr/local/cuda/bin/nvcc ]; then
+        if grep -q "^#!/bin/sh" /usr/local/cuda/bin/nvcc 2>/dev/null; then
+            # It's our stub — that's expected
+            true
+        fi
+    elif [ "${HAS_GPU:-false}" = "true" ]; then
+        issues+=("nvcc missing (deepspeed JIT compile unavailable)")
+    fi
+
+    # Python version mismatch
+    if [ -x "$VENV_PATH/bin/python" ]; then
+        local venv_py sys_py
+        venv_py=$("$VENV_PATH/bin/python" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+        sys_py=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "none")
+        if [ "$venv_py" != "$sys_py" ] && [ "$sys_py" != "none" ]; then
+            # Info only, not an error (our NV link fallback handles this)
+            true
+        fi
+    fi
+
+    if [ ${#issues[@]} -gt 0 ]; then
+        local detail
+        detail=$(IFS='; '; echo "${issues[*]}")
+        status_warn "Cloud environment ($detail)"
+    else
+        status_ok "Cloud environment (${CLOUD_REASON:-detected})"
     fi
 }
 
@@ -305,9 +476,16 @@ check_cuda_toolkit() {
     fi
 
     if [ -x /usr/local/cuda/bin/nvcc ]; then
-        local cuda_ver
-        cuda_ver=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
-        status_ok "CUDA Toolkit ($cuda_ver)"
+        # Detect stub vs real nvcc
+        if grep -q "^#!/bin/sh" /usr/local/cuda/bin/nvcc 2>/dev/null; then
+            local stub_ver
+            stub_ver=$(/usr/local/cuda/bin/nvcc -V 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+            status_warn "CUDA Toolkit (stub nvcc ${stub_ver} — runtime only, no JIT compile)"
+        else
+            local cuda_ver
+            cuda_ver=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+            status_ok "CUDA Toolkit ($cuda_ver)"
+        fi
     elif command -v nvcc &>/dev/null; then
         local cuda_ver
         cuda_ver=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
@@ -328,17 +506,25 @@ check_cudnn() {
         return
     fi
 
+    # Check system package first
     local cudnn_ver
     cudnn_ver=$(dpkg -l 'cudnn9-*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
-    if [ -n "$cudnn_ver" ]; then
-        status_ok "cuDNN ($cudnn_ver)"
+    [ -z "$cudnn_ver" ] && cudnn_ver=$(dpkg -l 'libcudnn*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
+
+    # Also check torch runtime cuDNN (works even without system package)
+    local torch_cudnn=""
+    if [ -x "$VENV_PATH/bin/python" ]; then
+        torch_cudnn=$("$VENV_PATH/bin/python" -W ignore -c "import torch; print(f'enabled v{torch.backends.cudnn.version()}' if torch.backends.cudnn.is_available() else 'disabled')" 2>/dev/null || true)
+    fi
+
+    if [ -n "$cudnn_ver" ] && [[ "$torch_cudnn" == enabled* ]]; then
+        status_ok "cuDNN (system: $cudnn_ver, torch: $torch_cudnn)"
+    elif [[ "$torch_cudnn" == enabled* ]]; then
+        status_ok "cuDNN (torch bundled: $torch_cudnn)"
+    elif [ -n "$cudnn_ver" ]; then
+        status_warn "cuDNN (system: $cudnn_ver, but torch reports: ${torch_cudnn:-unknown})"
     else
-        cudnn_ver=$(dpkg -l 'libcudnn*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
-        if [ -n "$cudnn_ver" ]; then
-            status_ok "cuDNN ($cudnn_ver)"
-        else
-            status_warn "cuDNN (not installed)"
-        fi
+        status_warn "cuDNN (not detected)"
     fi
 }
 
@@ -347,21 +533,42 @@ check_nccl() {
         return
     fi
 
-    if [ "${GPU_COUNT:-1}" -le 1 ]; then
-        return  # NCCL only relevant for multi-GPU
-    fi
-
+    # Check system package
     local nccl_ver
     nccl_ver=$(dpkg -l 'libnccl2' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
-    if [ -n "$nccl_ver" ]; then
-        status_ok "NCCL ($nccl_ver)"
-    else
-        status_warn "NCCL (not installed — recommended for multi-GPU)"
+
+    # Also check torch runtime NCCL
+    local torch_nccl=""
+    if [ -x "$VENV_PATH/bin/python" ]; then
+        torch_nccl=$("$VENV_PATH/bin/python" -W ignore -c "
+import torch
+try:
+    v = torch.cuda.nccl.version()
+    print(str(v[0])+'.'+str(v[1])+'.'+str(v[2]))
+except Exception:
+    print('unavailable')
+" 2>/dev/null || true)
+    fi
+
+    if [ -n "$nccl_ver" ] && [ -n "$torch_nccl" ] && [ "$torch_nccl" != "unavailable" ]; then
+        status_ok "NCCL (system: $nccl_ver, torch: $torch_nccl)"
+    elif [ -n "$torch_nccl" ] && [ "$torch_nccl" != "unavailable" ]; then
+        status_ok "NCCL (torch bundled: $torch_nccl)"
+    elif [ -n "$nccl_ver" ]; then
+        status_ok "NCCL (system: $nccl_ver)"
+    elif [ "${GPU_COUNT:-1}" -gt 1 ]; then
+        status_warn "NCCL (not detected — recommended for multi-GPU)"
     fi
 }
 
 check_gpu_kernel_tuning() {
     if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ]; then
+        return
+    fi
+
+    # Skip in cloud/container — kernel tuning requires host-level access
+    if [ "${IS_CLOUD:-false}" = "true" ]; then
+        status_skip "GPU kernel tuning (cloud/container — managed by host)"
         return
     fi
 
@@ -563,6 +770,7 @@ echo ""
 # Run all checks
 check_disk_space
 check_hardware_profile
+check_cloud_environment
 check_nvidia_driver
 check_cuda_toolkit
 check_cudnn
@@ -572,6 +780,8 @@ check_uv
 check_python
 check_venv
 check_key_packages
+check_gpu_packages
+check_gpu_functional
 check_node
 check_java
 check_shell_integration

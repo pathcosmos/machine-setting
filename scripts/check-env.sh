@@ -58,7 +58,7 @@ if not ok:
 " 2>/dev/null
 
 echo ""
-echo "--- GPU Packages ---"
+echo "--- GPU Stack ---"
 "$PY" -c "
 import torch
 backends = []
@@ -70,13 +70,30 @@ if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
     backends.append('MPS (Apple Silicon)')
 if not backends:
     backends.append('CPU only')
-print(f'  torch {torch.__version__} ({", ".join(backends)})')
+print(f'  torch {torch.__version__} ({\", \".join(backends)})')
+
+# cuDNN status
+if torch.backends.cudnn.is_available():
+    print(f'  cuDNN {torch.backends.cudnn.version()} (enabled={torch.backends.cudnn.enabled})')
+else:
+    print(f'  cuDNN not available')
+
+# NCCL status
+try:
+    v = torch.cuda.nccl.version()
+    print(f'  NCCL {v[0]}.{v[1]}.{v[2]}')
+except:
+    print(f'  NCCL not available')
 " 2>/dev/null || echo "  torch: not installed"
 
+echo ""
+echo "--- GPU Packages ---"
 "$PY" -c "import flash_attn; print(f'  flash_attn {flash_attn.__version__}')" 2>/dev/null || echo "  flash_attn: not installed (GPU-only)"
 "$PY" -c "import transformer_engine as te; print(f'  transformer_engine {te.__version__}')" 2>/dev/null || echo "  transformer_engine: not installed (NGC-only)"
 "$PY" -c "import bitsandbytes; print(f'  bitsandbytes {bitsandbytes.__version__}')" 2>/dev/null || echo "  bitsandbytes: not installed"
 "$PY" -c "import triton; print(f'  triton {triton.__version__}')" 2>/dev/null || echo "  triton: not installed"
+"$PY" -c "import vllm; print(f'  vllm {vllm.__version__}')" 2>/dev/null || echo "  vllm: not installed"
+"$PY" -c "import deepspeed; print(f'  deepspeed {deepspeed.__version__}')" 2>/dev/null || echo "  deepspeed: not installed"
 
 echo ""
 
@@ -92,5 +109,50 @@ if [ -L "$VENV_PATH/lib/python"*"/site-packages/torch" ] 2>/dev/null; then
     done
     echo ""
 fi
+
+# GPU functional test
+"$PY" -c "
+import torch
+if torch.cuda.is_available():
+    print('--- GPU Functional Test ---')
+    # matmul
+    a = torch.randn(512, 512, device='cuda')
+    b = torch.randn(512, 512, device='cuda')
+    c = torch.mm(a, b)
+    print(f'  matmul (512x512): OK')
+
+    # cuDNN conv2d
+    conv = torch.nn.Conv2d(3, 64, 3, padding=1).cuda()
+    x = torch.randn(1, 3, 64, 64, device='cuda')
+    _ = conv(x)
+    print(f'  cuDNN conv2d:     OK')
+
+    # Memory
+    props = torch.cuda.get_device_properties(0)
+    print(f'  GPU memory:       {props.total_memory / 1024**3:.1f} GB')
+    print(f'  Compute cap:      {torch.cuda.get_device_capability(0)}')
+
+    torch.cuda.empty_cache()
+    del a, b, c, conv, x
+" 2>/dev/null || true
+
+echo ""
+
+# Environment info
+echo "--- Environment ---"
+if [ -f /.dockerenv ] || grep -qsE '(docker|containerd|kubepods)' /proc/1/cgroup 2>/dev/null; then
+    echo "  Container: yes"
+fi
+if [ -x /usr/local/cuda/bin/nvcc ] && grep -q "^#!/bin/sh" /usr/local/cuda/bin/nvcc 2>/dev/null; then
+    echo "  nvcc: stub (runtime only, no JIT compile)"
+elif command -v nvcc &>/dev/null; then
+    echo "  nvcc: $(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p')"
+else
+    echo "  nvcc: not found"
+fi
+if [ "$(uname -s)" = "Linux" ] && ! ldconfig -p 2>/dev/null | grep -q libGL.so.1; then
+    echo "  Display: headless (no libGL)"
+fi
+echo ""
 
 echo "=== Check Complete ==="

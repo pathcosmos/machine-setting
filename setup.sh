@@ -12,6 +12,7 @@
 #   ./setup.sh --from 3                           # Start from stage 3
 #   ./setup.sh --doctor                           # Run health check
 #   ./setup.sh --recover                          # Auto-recover broken components
+#   ./setup.sh --cloud                             # Cloud/container mode (skip sudo ops)
 #   ./setup.sh --uninstall                        # Uninstall
 set -euo pipefail
 
@@ -43,6 +44,7 @@ OPT_RESUME=false
 OPT_RESET=false
 OPT_FROM=""
 OPT_PREFLIGHT=""       # ""=auto in interactive, "plan"=check only, "run"=check then install
+OPT_CLOUD=""           # ""=auto-detect, true=force cloud mode
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,6 +61,7 @@ while [[ $# -gt 0 ]]; do
         --java)         OPT_JAVA=true; INTERACTIVE=false; shift ;;
         --no-java)      OPT_JAVA=false; INTERACTIVE=false; shift ;;
         --profile)      PROFILE="$2"; INTERACTIVE=false; shift 2 ;;
+        --cloud)        OPT_CLOUD=true; INTERACTIVE=false; shift ;;
         --dry-run)      shift; exec bash "$SCRIPT_DIR/scripts/dry-run.sh" "$@" ;;
         --plan)         exec bash "$SCRIPT_DIR/scripts/preflight.sh" --check-only ;;
         --preflight)    OPT_PREFLIGHT="run"; shift ;;
@@ -78,7 +81,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-node         Skip Node.js"
             echo "  --java            Install SDKMAN + Java"
             echo "  --no-java         Skip Java"
-            echo "  --profile <name>  Use profile (gpu-workstation, cpu-server, mac-apple-silicon, laptop, minimal)"
+            echo "  --cloud           Cloud/container mode (skip driver/CUDA/kernel tuning)"
+            echo "  --profile <name>  Use profile (gpu-workstation, cloud-server, cpu-server, mac-apple-silicon, laptop, minimal)"
             echo ""
             echo "Diagnostic options:"
             echo "  --dry-run         Full system dry-run diagnostic (all 7 stages)"
@@ -213,6 +217,25 @@ if [ -z "$PROFILE" ]; then
         PROFILE_FILE="$SCRIPT_DIR/profiles/${PROFILE}.conf"
         [ -f "$PROFILE_FILE" ] && source "$PROFILE_FILE"
     fi
+fi
+
+# --- Cloud mode resolution ---
+# Explicit --cloud flag overrides; otherwise auto-detect from hardware profile
+if [ "$OPT_CLOUD" = true ]; then
+    CLOUD_MODE=true
+elif [ -z "$OPT_CLOUD" ] && [ "${IS_CLOUD:-false}" = true ]; then
+    CLOUD_MODE=true
+fi
+
+if [ "${CLOUD_MODE:-false}" = true ]; then
+    echo "  ☁ Cloud mode active (${CLOUD_REASON:-manual})"
+    echo "    → Skipping: driver install, CUDA toolkit, kernel tuning, system packages"
+    echo "    → Installing: Python venv, Node.js, Java, shell config (user-space only)"
+    echo ""
+    # Force-disable all sudo-required stages
+    INSTALL_NVIDIA=false
+    NVIDIA_SYSTEM_TOOLS=false
+    NVIDIA_KERNEL_TUNING=false
 fi
 
 # ============================================================
