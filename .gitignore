@@ -46,5 +46,6 @@ Thumbs.db
 logs/
 
 # === Claude Code (keep .claude/settings.json only) ===
-.claude/*
+.claude/**
+!.claude/
 !.claude/settings.json
