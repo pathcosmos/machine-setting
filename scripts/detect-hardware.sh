@@ -19,6 +19,7 @@ CUDA_SUFFIX="cpu"
 
 case "$OS_TYPE" in
     Linux)
+        # Try lspci first (may not work in containers)
         if command -v lspci &>/dev/null; then
             GPU_INFO=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' | grep -i nvidia || true)
             if [ -n "$GPU_INFO" ]; then
@@ -30,6 +31,15 @@ case "$OS_TYPE" in
                 else
                     GPU_NAME=$(echo "$GPU_INFO" | head -1 | sed 's/.*: //')
                 fi
+            fi
+        fi
+        # Fallback: nvidia-smi (containers often expose GPU without lspci)
+        if [ "$HAS_GPU" = false ] && command -v nvidia-smi &>/dev/null; then
+            GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
+            if [ -n "$GPU_NAME" ]; then
+                HAS_GPU=true
+                GPU_BACKEND="cuda"
+                GPU_COUNT=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | wc -l)
             fi
         fi
         ;;
@@ -120,11 +130,57 @@ if [ "$GPU_BACKEND" = "cuda" ]; then
     fi
 fi
 
+# --- Cloud / Container Environment Detection ---
+IS_CLOUD=false
+CLOUD_REASON=""
+HAS_SUDO=true
+
+# Check sudo availability
+if ! command -v sudo &>/dev/null; then
+    HAS_SUDO=false
+elif ! sudo -n true 2>/dev/null; then
+    # sudo exists but requires password or is denied
+    HAS_SUDO=false
+fi
+
+# Detect container environments
+if [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+    IS_CLOUD=true
+    CLOUD_REASON="container detected"
+elif grep -qsE '(docker|containerd|lxc|kubepods)' /proc/1/cgroup 2>/dev/null; then
+    IS_CLOUD=true
+    CLOUD_REASON="cgroup container detected"
+elif [ -n "${KUBERNETES_SERVICE_HOST:-}" ]; then
+    IS_CLOUD=true
+    CLOUD_REASON="Kubernetes pod"
+fi
+
+# Detect cloud VM metadata (common cloud providers)
+if [ "$IS_CLOUD" = false ]; then
+    if [ -f /sys/class/dmi/id/board_vendor ] 2>/dev/null; then
+        VENDOR=$(cat /sys/class/dmi/id/board_vendor 2>/dev/null || true)
+        case "$VENDOR" in
+            *Amazon*|*Google*|*Microsoft*|*DigitalOcean*|*Vultr*|*Oracle*)
+                IS_CLOUD=true
+                CLOUD_REASON="cloud VM ($VENDOR)"
+                ;;
+        esac
+    fi
+fi
+
+# No sudo + not already detected = treat as cloud-like restricted environment
+if [ "$HAS_SUDO" = false ] && [ "$IS_CLOUD" = false ]; then
+    IS_CLOUD=true
+    CLOUD_REASON="no sudo access"
+fi
+
 # --- Profile Suggestion ---
 if [ "$GPU_BACKEND" = "mps" ]; then
     SUGGESTED_PROFILE="mac-apple-silicon"
 elif [ "$IS_NGC_CONTAINER" = true ]; then
     SUGGESTED_PROFILE="ngc-container"
+elif [ "$IS_CLOUD" = true ]; then
+    SUGGESTED_PROFILE="cloud-server"
 elif [ "$GPU_BACKEND" = "cuda" ]; then
     SUGGESTED_PROFILE="gpu-workstation"
 elif [ "$OS_ID" = "macos" ]; then
@@ -146,6 +202,8 @@ echo "  Backend: ${GPU_BACKEND:-none}"
 [ "$GPU_BACKEND" = "cuda" ] && echo "  CUDA: ${CUDA_VERSION:-none} (${CUDA_SUFFIX})"
 [ "$GPU_BACKEND" = "mps" ] && echo "  MPS: available (Metal Performance Shaders)"
 [ "$IS_NGC_CONTAINER" = true ] && echo "  NGC: detected (NV custom builds available)"
+[ "$IS_CLOUD" = true ] && echo "  Cloud: yes (${CLOUD_REASON})"
+[ "$HAS_SUDO" = false ] && echo "  Sudo: not available (user-space install only)"
 echo "  Profile: ${SUGGESTED_PROFILE}"
 
 # --- Write profile ---
@@ -166,6 +224,9 @@ GPU_BACKEND="${GPU_BACKEND}"
 CUDA_VERSION="${CUDA_VERSION}"
 CUDA_SUFFIX="${CUDA_SUFFIX}"
 IS_NGC_CONTAINER=${IS_NGC_CONTAINER}
+IS_CLOUD=${IS_CLOUD}
+CLOUD_REASON="${CLOUD_REASON}"
+HAS_SUDO=${HAS_SUDO}
 SUGGESTED_PROFILE="${SUGGESTED_PROFILE}"
 EOF
 

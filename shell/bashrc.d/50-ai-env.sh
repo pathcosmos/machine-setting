@@ -22,6 +22,12 @@ aienv() {
     # TF32 provides ~2x throughput for FP32 matmul with minimal precision loss
     export NVIDIA_TF32_OVERRIDE=1
 
+    # Cloud/container: if nvcc is missing, configure deepspeed to skip JIT compilation
+    if command -v nvidia-smi &>/dev/null && ! command -v nvcc &>/dev/null; then
+        export DS_BUILD_OPS=0
+        export CUDA_HOME=""
+    fi
+
     echo "AI env activated: $VENV_PATH ($(python --version))"
 
     # Background update check

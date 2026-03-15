@@ -80,6 +80,12 @@ fi
 UV_PIP="uv pip"
 INSTALL_ARGS="--python $VENV_PATH/bin/python"
 
+# --- Detect headless environment (no libGL → skip opencv-python, keep headless only) ---
+IS_HEADLESS=false
+if [ "$(uname -s)" = "Linux" ] && ! ldconfig -p 2>/dev/null | grep -q libGL.so.1; then
+    IS_HEADLESS=true
+fi
+
 # --- Install package groups ---
 for group in $PACKAGE_GROUPS; do
     # Skip groups already installed (checkpoint tracking)
@@ -100,7 +106,16 @@ for group in $PACKAGE_GROUPS; do
             $UV_PIP install $INSTALL_ARGS cx-Oracle --no-build-isolation 2>&1 | tail -1
         fi
 
-        $UV_PIP install $INSTALL_ARGS -r "$REQ_FILE" 2>&1 | tail -1
+        # Headless container: filter out opencv-python (keep headless variant only)
+        if [ "$IS_HEADLESS" = true ] && grep -q "opencv-python" "$REQ_FILE" 2>/dev/null; then
+            echo "    (headless env: skipping opencv-python, using opencv-python-headless only)"
+            FILTERED_REQ=$(mktemp)
+            grep -v '^opencv-python==' "$REQ_FILE" > "$FILTERED_REQ"
+            $UV_PIP install $INSTALL_ARGS -r "$FILTERED_REQ" 2>&1 | tail -1
+            rm -f "$FILTERED_REQ"
+        else
+            $UV_PIP install $INSTALL_ARGS -r "$REQ_FILE" 2>&1 | tail -1
+        fi
         # Track completion
         [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "$group"
     else
@@ -165,7 +180,6 @@ fi
 # --- NV Custom Build Symlinks (NGC container mode) ---
 if [ "$NV_LINK" = true ]; then
     echo ""
-    echo "  Linking NV custom packages from system site-packages..."
 
     VENV_SITE=$("$VENV_PATH/bin/python" -c "import site; print(site.getsitepackages()[0])")
     # Detect system site-packages
@@ -174,40 +188,95 @@ if [ "$NV_LINK" = true ]; then
     if [ -n "$SYS_PYTHON" ]; then
         SYS_SITE=$("$SYS_PYTHON" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)
     fi
-    # Debian/Ubuntu fallback
-    if [ -z "$SYS_SITE" ] || [ ! -d "$SYS_SITE" ]; then
-        SYS_PY_VER=$("$SYS_PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "$PYTHON_VERSION")
-        for candidate in "/usr/local/lib/python${SYS_PY_VER}/dist-packages" "/usr/lib/python3/dist-packages"; do
-            if [ -d "$candidate" ]; then
-                SYS_SITE="$candidate"
+
+    # Check Python version compatibility (symlink only works with same major.minor)
+    VENV_PY_VER=$("$VENV_PATH/bin/python" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+    SYS_PY_VER=$("$SYS_PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "unknown")
+
+    if [ "$VENV_PY_VER" != "$SYS_PY_VER" ]; then
+        echo "  NV link skipped: Python version mismatch (venv=$VENV_PY_VER, system=$SYS_PY_VER)"
+        echo "  → Falling back to pip install GPU packages for Python $VENV_PY_VER"
+        NV_LINK=false
+
+        # Install GPU packages via pip instead
+        INDEX_URL=""
+        while IFS='=' read -r key val; do
+            [ -z "$key" ] || [[ "$key" =~ ^# ]] && continue
+            if [ "$key" = "$CUDA_SUFFIX" ]; then
+                INDEX_URL="$val"
                 break
             fi
-        done
-    fi
+        done < "$REPO_DIR/config/gpu-index-urls.conf"
 
-    if [ -z "$SYS_SITE" ] || [ ! -d "$SYS_SITE" ]; then
-        echo "  Warning: Could not detect system site-packages. Skipping NV link."
+        if [ -n "$INDEX_URL" ]; then
+            echo "  Installing GPU packages (CUDA $CUDA_VERSION, index: $INDEX_URL)..."
+            $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-gpu.txt" \
+                --index-url "$INDEX_URL" \
+                --extra-index-url "https://pypi.org/simple" 2>&1 | tail -1
+            [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "gpu"
+        else
+            echo "  Warning: No index URL found for $CUDA_SUFFIX, skipping GPU packages"
+        fi
     else
-        echo "  System site-packages: $SYS_SITE"
-        LINKED=0
-        for pkg in $NV_LINK_PACKAGES; do
-            if [ -d "$SYS_SITE/$pkg" ]; then
-                # Remove pip-installed version if exists (to replace with symlink)
-                [ -d "$VENV_SITE/$pkg" ] && [ ! -L "$VENV_SITE/$pkg" ] && rm -rf "$VENV_SITE/$pkg"
-                ln -sfn "$SYS_SITE/$pkg" "$VENV_SITE/$pkg"
-                # Also link dist-info directories
-                for dist_info in "$SYS_SITE"/${pkg}-*.dist-info "$SYS_SITE"/${pkg//_/-}-*.dist-info; do
-                    if [ -d "$dist_info" ]; then
-                        ln -sfn "$dist_info" "$VENV_SITE/$(basename "$dist_info")"
-                    fi
-                done
-                LINKED=$((LINKED + 1))
-                echo "    Linked: $pkg"
-            else
-                echo "    Skip: $pkg (not in system)"
-            fi
-        done
-        echo "  Linked $LINKED NV packages"
+        echo "  Linking NV custom packages from system site-packages..."
+        # Debian/Ubuntu fallback
+        if [ -z "$SYS_SITE" ] || [ ! -d "$SYS_SITE" ]; then
+            SYS_PY_VER=$("$SYS_PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || echo "$PYTHON_VERSION")
+            for candidate in "/usr/local/lib/python${SYS_PY_VER}/dist-packages" "/usr/lib/python3/dist-packages"; do
+                if [ -d "$candidate" ]; then
+                    SYS_SITE="$candidate"
+                    break
+                fi
+            done
+        fi
+
+        if [ -z "$SYS_SITE" ] || [ ! -d "$SYS_SITE" ]; then
+            echo "  Warning: Could not detect system site-packages. Skipping NV link."
+        else
+            echo "  System site-packages: $SYS_SITE"
+            LINKED=0
+            for pkg in $NV_LINK_PACKAGES; do
+                if [ -d "$SYS_SITE/$pkg" ]; then
+                    # Remove pip-installed version if exists (to replace with symlink)
+                    [ -d "$VENV_SITE/$pkg" ] && [ ! -L "$VENV_SITE/$pkg" ] && rm -rf "$VENV_SITE/$pkg"
+                    ln -sfn "$SYS_SITE/$pkg" "$VENV_SITE/$pkg"
+                    # Also link dist-info directories
+                    for dist_info in "$SYS_SITE"/${pkg}-*.dist-info "$SYS_SITE"/${pkg//_/-}-*.dist-info; do
+                        if [ -d "$dist_info" ]; then
+                            ln -sfn "$dist_info" "$VENV_SITE/$(basename "$dist_info")"
+                        fi
+                    done
+                    LINKED=$((LINKED + 1))
+                    echo "    Linked: $pkg"
+                else
+                    echo "    Skip: $pkg (not in system)"
+                fi
+            done
+            echo "  Linked $LINKED NV packages"
+        fi
+    fi
+fi
+
+# --- Cloud/container: create nvcc stub if missing ---
+# deepspeed requires nvcc at import time to check op compatibility.
+# In runtime-only containers, CUDA libs exist but nvcc doesn't.
+# Create a minimal stub that returns the CUDA version from nvidia-smi.
+if [ "${IS_CLOUD:-false}" = true ] || [ "${CLOUD_MODE:-false}" = true ]; then
+    CUDA_HOME_PATH="${CUDA_HOME:-/usr/local/cuda}"
+    if [ -d "$CUDA_HOME_PATH" ] && [ ! -x "$CUDA_HOME_PATH/bin/nvcc" ]; then
+        # Detect CUDA version from nvidia-smi
+        NVCC_CUDA_VER=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/p' || true)
+        if [ -n "$NVCC_CUDA_VER" ]; then
+            echo ""
+            echo "  Creating nvcc stub (CUDA $NVCC_CUDA_VER, no toolkit installed)..."
+            mkdir -p "$CUDA_HOME_PATH/bin"
+            cat > "$CUDA_HOME_PATH/bin/nvcc" << STUB
+#!/bin/sh
+echo "nvcc: NVIDIA (R) Cuda compiler driver"
+echo "Cuda compilation tools, release ${NVCC_CUDA_VER}"
+STUB
+            chmod +x "$CUDA_HOME_PATH/bin/nvcc"
+        fi
     fi
 fi
 
