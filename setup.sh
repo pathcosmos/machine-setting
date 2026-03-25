@@ -69,6 +69,7 @@ while [[ $# -gt 0 ]]; do
         --reset)        OPT_RESET=true; shift ;;
         --from)         OPT_FROM="$2"; shift 2 ;;
         --doctor)       exec bash "$SCRIPT_DIR/scripts/doctor.sh" ;;
+        --gpu-doctor)   exec bash "$SCRIPT_DIR/scripts/gpu-doctor.sh" ;;
         --recover)      exec bash "$SCRIPT_DIR/scripts/doctor.sh" --recover ;;
         --uninstall)    shift; exec bash "$SCRIPT_DIR/scripts/uninstall.sh" "$@" ;;
         --help|-h)
@@ -94,6 +95,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --reset           Reset state and start from scratch"
             echo "  --from <N>        Start from stage N (1-7), mark earlier stages as done"
             echo "  --doctor          Run health check"
+            echo "  --gpu-doctor      GPU-specific health diagnostics"
             echo "  --recover         Auto-recover broken components"
             echo "  --uninstall       Uninstall (pass additional flags after --uninstall)"
             echo "  --help            Show this help"
