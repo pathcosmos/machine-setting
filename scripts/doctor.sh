@@ -449,18 +449,31 @@ check_nvidia_driver() {
         return
     fi
 
-    if command -v nvidia-smi &>/dev/null; then
-        local driver_ver
-        driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
-        if [ -n "$driver_ver" ]; then
-            local gpu_info
-            gpu_info=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
-            status_ok "NVIDIA driver ($driver_ver, $gpu_info)"
-        else
-            status_fail "NVIDIA driver (nvidia-smi present but cannot communicate with driver)" "nvidia"
-        fi
+    # Use gpu-doctor.sh --summary for comprehensive check
+    if [ -x "$SCRIPT_DIR/gpu-doctor.sh" ]; then
+        local gpu_summary gpu_exit=0
+        gpu_summary=$("$SCRIPT_DIR/gpu-doctor.sh" --summary 2>/dev/null) || gpu_exit=$?
+
+        case "$gpu_exit" in
+            0) status_ok "GPU health ($gpu_summary)" ;;
+            1) status_warn "GPU health ($gpu_summary → run './scripts/gpu-doctor.sh')" ;;
+            *) status_fail "GPU health ($gpu_summary)" "nvidia" ;;
+        esac
     else
-        status_fail "NVIDIA driver (nvidia-smi not found)" "nvidia"
+        # Fallback: basic nvidia-smi check
+        if command -v nvidia-smi &>/dev/null; then
+            local driver_ver
+            driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
+            if [ -n "$driver_ver" ]; then
+                local gpu_info
+                gpu_info=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
+                status_ok "NVIDIA driver ($driver_ver, $gpu_info)"
+            else
+                status_fail "NVIDIA driver (nvidia-smi present but cannot communicate with driver)" "nvidia"
+            fi
+        else
+            status_fail "NVIDIA driver (nvidia-smi not found)" "nvidia"
+        fi
     fi
 }
 
