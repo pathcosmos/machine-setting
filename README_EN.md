@@ -422,6 +422,9 @@ make recover           # Auto-recover broken components
 | `make reset` | Reset state and start from scratch |
 | `make cloud` | Cloud/container setup (user-space only, no sudo needed) |
 | `make gpu-extras` | Install GPU extras only (system tools + kernel tuning, sudo). Use when driver/CUDA already installed |
+| `make gpu-doctor` | GPU-specific health diagnostics |
+| `make gpu-persist-fix` | Apply permanent GPU stability fixes (sudo required) |
+| `make gpu-persist-check` | Check GPU persistence fix status (no sudo needed) |
 
 ### `aienv` Details
 
@@ -580,6 +583,8 @@ make preflight
 | `--from <N>` | Start from Stage N (1-7) |
 | `--doctor` | Health check |
 | `--recover` | Auto-recover |
+| `--gpu-doctor` | GPU-specific health diagnostics |
+| `--gpu-persist-fix` | Apply permanent GPU stability fixes (sudo required) |
 | `--uninstall` | Uninstall (additional flags available) |
 
 ---
@@ -729,6 +734,39 @@ make cloud
 - **Headless containers**: installs `opencv-python-headless` only (skips `opencv-python` when `libGL` is missing)
 - **Runtime-only containers**: creates nvcc stub for DeepSpeed import compatibility
 - **`aienv` activation**: sets `DS_BUILD_OPS=0` when nvcc is unavailable
+
+### GPU Persistence & Stability
+
+Permanently fixes Xid 79 "GPU has fallen off the bus" caused by PCIe power management.
+
+```bash
+# Check status (no sudo needed)
+./scripts/gpu-persist-fix.sh --check
+make gpu-persist-check
+
+# Apply permanent fixes (6 components)
+sudo ./scripts/gpu-persist-fix.sh
+make gpu-persist-fix
+
+# Preview changes
+sudo ./scripts/gpu-persist-fix.sh --dry-run
+
+# Undo all changes
+sudo ./scripts/gpu-persist-fix.sh --revert
+```
+
+**6 fixes applied:**
+
+| # | Component | Description |
+|---|-----------|-------------|
+| 1 | GRUB | Disable PCIe ASPM + GPU dynamic power management |
+| 2 | udev | Force NVIDIA GPU PCIe power/control to 'on' |
+| 3 | modprobe | Set NVreg_DynamicPowerManagement=0x00 |
+| 4 | nvidia-persistenced | Enable GPU persistence daemon |
+| 5 | GPU watchdog | systemd timer checking GPU health every 5 min |
+| 6 | PCIe power service | Boot-time power/control=on enforcement |
+
+> **Note:** PCIe power settings take effect immediately; other fixes require reboot.
 
 ---
 
@@ -907,6 +945,10 @@ Checks the following items:
 | cuDNN | dpkg status + **torch.backends.cudnn runtime verification** |
 | NCCL | dpkg status + **torch.cuda.nccl runtime verification** |
 | GPU kernel tuning | sysctl parameters applied (auto-skipped in cloud) |
+| GPU persistence | gpu-persist-fix 6-component status check |
+| CPU frequency | CPU frequency throttling detection |
+| Memory | Memory availability + swap status |
+| Disk SMART health | Disk SMART health status (requires smartmontools) |
 | uv | uv installation and version |
 | Python | uv-managed Python exists |
 | Virtual environment | venv directory, bin/python, bin/activate exist |
@@ -931,6 +973,10 @@ Output example (Cloud/Container):
   [OK]   cuDNN (system: 8.9.6, torch: enabled v91002)
   [OK]   NCCL (system: 2.19.3, torch: 2.27.5)
   [SKIP] GPU kernel tuning (cloud/container — managed by host)
+  [OK]   GPU persistence (all 6 fixes in place)
+  [OK]   CPU frequency (2899MHz / 3500MHz, 82%)
+  [OK]   Memory (57GB free, 91%)
+  [SKIP] Disk SMART health (smartmontools not installed — apt install smartmontools)
   [OK]   uv (uv 0.10.10)
   [OK]   Python (Python 3.12.13)
   [OK]   Virtual environment (~/ai-env, 379 packages)
@@ -961,7 +1007,7 @@ make recover
 ./scripts/doctor.sh --recover shell
 ```
 
-Available recovery targets: `disk`, `hardware`, `nvidia`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
+Available recovery targets: `disk`, `hardware`, `nvidia`, `gpu_persistence`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
 
 Recovery actions per component:
 
@@ -969,6 +1015,7 @@ Recovery actions per component:
 |-----------|----------------|
 | hardware | Re-run `detect-hardware.sh` |
 | nvidia | Re-run `install-nvidia.sh` (driver, CUDA, cuDNN, NCCL) |
+| `gpu_persistence` | Run `gpu-persist-fix.sh` (apply all 6 fixes) |
 | uv | Reinstall uv (`curl ... \| sh`) |
 | python | Install uv first if missing, then `uv python install` |
 | venv | Recreate venv + reinstall packages |
@@ -1156,6 +1203,8 @@ machine_setting/
 │   ├── uninstall.sh            # Component uninstaller (incl. NVIDIA)
 │   ├── sync.sh                 # Git sync (push/pull/status)
 │   ├── export-packages.sh      # venv -> requirements export
+│   ├── gpu-doctor.sh           # GPU-specific health diagnostics (6 sections + summary mode)
+│   ├── gpu-persist-fix.sh      # GPU stability fixes (GRUB, udev, modprobe, persistenced, watchdog, PCIe)
 │   ├── check-env.sh            # AI environment verification
 │   ├── check-secrets.sh        # Secret leak scanner
 │   ├── disk-check-smart.sh    # SMART detail collection
@@ -1242,6 +1291,8 @@ make check
 | Package import failure | `make verify` -> `make recover` |
 | Installation failed midway | `./setup.sh --resume` |
 | Shell config broken | `./scripts/doctor.sh --recover shell` (restores from backup) |
+| GPU fell off bus (Xid 79) | Run `sudo ./scripts/gpu-persist-fix.sh` then reboot |
+| GPU instability | Diagnose with `./scripts/gpu-doctor.sh` |
 
 ---
 

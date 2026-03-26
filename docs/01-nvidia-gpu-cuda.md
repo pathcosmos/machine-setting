@@ -171,3 +171,31 @@ deb [signed-by=/usr/share/keyrings/nvidia-cuda-archive-keyring.gpg] \
 | nvidia-suspend.service | enabled | GPU 서스펜드 |
 | nvidia-cdi-refresh.service | enabled | Container Device Interface 갱신 |
 | gpu-manager.service | enabled | GPU 관리자 |
+
+## 7. GPU 안정성 진단 및 수정
+
+### gpu-doctor.sh — GPU 전용 진단
+
+6개 섹션으로 GPU 하드웨어 상태를 상세 점검합니다:
+
+1. 드라이버 통신 (nvidia-smi 상태)
+2. Xid 에러 (최근 24시간 커널 로그)
+3. PCI 버스 상태 (링크 속도, 대역폭)
+4. 온도 및 전력 (스로틀링 감지)
+5. 드라이버 호환성 (아키텍처별 최소 드라이버)
+6. ECC 상태 (기업용 GPU 전용)
+
+```bash
+./scripts/gpu-doctor.sh           # 전체 진단
+./scripts/gpu-doctor.sh --summary # 한 줄 요약 (doctor.sh에서 호출)
+```
+
+### gpu-persist-fix.sh — Xid 79 영구 수정
+
+PCIe 전원 관리로 인한 "GPU has fallen off the bus" 문제를 6가지 항목으로 영구 수정합니다.
+자세한 내용은 README의 [GPU Persistence & Stability] 섹션을 참조하세요.
+
+```bash
+./scripts/gpu-persist-fix.sh --check  # 상태 확인
+sudo ./scripts/gpu-persist-fix.sh     # 적용
+```

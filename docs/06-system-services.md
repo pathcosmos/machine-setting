@@ -99,6 +99,27 @@ RestartSec=5
 | nvidia-cdi-refresh.service | Container Device Interface |
 | gpu-manager.service | GPU 관리 |
 
+### GPU 안정성 서비스 (gpu-persist-fix.sh로 설치)
+
+| 서비스 | 설명 | 생성 방법 |
+|--------|------|-----------|
+| `nvidia-persistenced.service` | GPU persistence daemon (GPU 컨텍스트 유지) | 시스템 패키지 |
+| `nvidia-gpu-watchdog.timer` | 5분마다 GPU 상태 점검 + 자동 복구 시도 | `gpu-persist-fix.sh` |
+| `nvidia-gpu-watchdog.service` | GPU watchdog oneshot (timer에 의해 실행) | `gpu-persist-fix.sh` |
+| `nvidia-pcie-power-fix.service` | 부팅 시 PCIe power/control=on 강제 적용 | `gpu-persist-fix.sh` |
+
+```bash
+# 서비스 상태 확인
+systemctl is-active nvidia-gpu-watchdog.timer
+systemctl is-enabled nvidia-pcie-power-fix.service
+
+# 전체 상태 한 번에 확인
+./scripts/gpu-persist-fix.sh --check
+
+# 서비스 제거 (되돌리기)
+sudo ./scripts/gpu-persist-fix.sh --revert
+```
+
 ### 시스템 기본
 
 | 서비스 | 용도 |
