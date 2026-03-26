@@ -35,6 +35,16 @@ if [ "$CHECK" = false ] && [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Validate dependencies (only for apply/revert modes)
+if [ "$CHECK" = false ]; then
+    for cmd in update-grub udevadm systemctl; do
+        if ! command -v "$cmd" &>/dev/null; then
+            echo -e "${RED}ERROR: '$cmd' not found. Install it first.${NC}"
+            exit 1
+        fi
+    done
+fi
+
 log_action() { echo -e "${CYAN}[ACTION]${NC} $1"; }
 log_ok()     { echo -e "${GREEN}[  OK  ]${NC} $1"; }
 log_skip()   { echo -e "${YELLOW}[ SKIP ]${NC} $1"; }
@@ -121,6 +131,11 @@ fix_udev() {
     if [ "$DRY_RUN" = true ]; then
         log_dry "Would create/update $UDEV_FILE"
         return 0
+    fi
+
+    # Backup existing rules
+    if [ -f "$UDEV_FILE" ]; then
+        cp "$UDEV_FILE" "${UDEV_FILE}.gpu-persist-fix.bak"
     fi
 
     cat > "$UDEV_FILE" <<'RULE'
@@ -335,6 +350,10 @@ revert_pcie_power_service() {
 # Check functions (for --check mode)
 # ============================================================
 check_grub_status() {
+    if [ ! -f "$GRUB_FILE" ]; then
+        echo -e "${YELLOW}GRUB:SKIP${NC} — $GRUB_FILE not found (cloud/container?)"
+        return 1
+    fi
     local grub_line
     grub_line=$(grep '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_FILE" 2>/dev/null || true)
     local missing=""
@@ -422,6 +441,8 @@ check_pcie_power_status() {
                 pwr=$(cat "$d/power/control" 2>/dev/null || echo "unknown")
                 if [ "$pwr" = "on" ]; then
                     ((ok_count++))
+                elif [ "$pwr" = "unknown" ]; then
+                    : # sysfs not readable — skip this device
                 else
                     fail_list="${fail_list:+$fail_list, }${dev_id}=${pwr}"
                 fi
@@ -498,17 +519,22 @@ else
 
     # Apply immediate fixes (no reboot needed for these)
     if [ "$DRY_RUN" = false ]; then
-        # Force power/control=on for all NVIDIA GPUs right now
+        echo -e "${CYAN}[ACTION]${NC} Applying PCIe power/control=on immediately..."
+        local immediate_count=0
         for d in /sys/bus/pci/devices/*/; do
             if [ -f "$d/vendor" ] && [ "$(cat "$d/vendor" 2>/dev/null)" = "0x10de" ]; then
+                local c
                 c=$(cat "$d/class" 2>/dev/null || true)
                 if [[ "$c" == 0x0300* ]] || [[ "$c" == 0x0302* ]]; then
-                    echo on > "$d/power/control" 2>/dev/null || true
+                    if echo on > "$d/power/control" 2>/dev/null; then
+                        ((immediate_count++))
+                    fi
                 fi
             fi
         done
         # Reload udev rules and trigger for NVIDIA devices
         udevadm trigger --subsystem-match=pci --attr-match=vendor=0x10de 2>/dev/null || true
+        echo -e "${GREEN}[  OK  ]${NC} ${immediate_count} GPU(s) PCIe power/control set to 'on'"
     fi
 
     echo ""
