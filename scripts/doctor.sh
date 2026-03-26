@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --recover [component]  Auto-recover (all or specific)"
             echo "  --verify-packages      Verify installed packages vs requirements"
             echo ""
-            echo "Components: disk, hardware, nvidia, uv, python, venv, packages, node, java, shell, platform"
+            echo "Components: disk, hardware, nvidia, gpu_persistence, uv, python, venv, packages, node, java, shell, platform"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -592,6 +592,168 @@ check_gpu_kernel_tuning() {
     fi
 }
 
+check_gpu_persistence() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+    if [ "${IS_CLOUD:-false}" = "true" ]; then
+        status_skip "GPU persistence (cloud/container — managed by host)"
+        return
+    fi
+
+    # Use gpu-persist-fix.sh --check if available
+    if [ -x "$SCRIPT_DIR/gpu-persist-fix.sh" ]; then
+        local check_output check_exit=0
+        check_output=$("$SCRIPT_DIR/gpu-persist-fix.sh" --check 2>/dev/null) || check_exit=$?
+
+        if [ "$check_exit" -eq 0 ]; then
+            status_ok "GPU persistence (all 6 fixes in place)"
+        else
+            local fails=""
+            while IFS= read -r line; do
+                if echo "$line" | grep -q ":FAIL\|:WARN"; then
+                    local comp
+                    comp=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g' | cut -d: -f1)
+                    fails="${fails:+$fails, }$comp"
+                fi
+            done <<< "$check_output"
+            status_warn "GPU persistence (${check_exit}/6 issues${fails:+: $fails} — run: sudo ./scripts/gpu-persist-fix.sh)"
+        fi
+        return
+    fi
+
+    # Fallback: dynamic bus ID detection via nvidia-smi
+    local gpu_bus_ids
+    gpu_bus_ids=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null || true)
+
+    if [ -n "$gpu_bus_ids" ]; then
+        while IFS= read -r bus_id; do
+            bus_id=$(echo "$bus_id" | tr -d ' ' | sed 's/^0000/0000/')
+            # Convert to lowercase sysfs format
+            local sysfs_id
+            sysfs_id=$(echo "$bus_id" | tr '[:upper:]' '[:lower:]')
+            local sysfs_path="/sys/bus/pci/devices/${sysfs_id}/power/control"
+            local pcie_power
+            pcie_power=$(cat "$sysfs_path" 2>/dev/null || echo "unknown")
+            if [ "$pcie_power" = "on" ]; then
+                status_ok "GPU PCIe power ($bus_id — on)"
+            elif [ "$pcie_power" = "auto" ]; then
+                status_warn "GPU PCIe power ($bus_id) is 'auto' — Xid 79 risk. Run: sudo ./scripts/gpu-persist-fix.sh"
+            fi
+        done <<< "$gpu_bus_ids"
+    fi
+
+    # GRUB parameter check
+    local grub_line
+    grub_line=$(grep '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub 2>/dev/null || true)
+    if [ -n "$grub_line" ] && echo "$grub_line" | grep -q "pcie_aspm=off"; then
+        status_ok "GRUB PCIe ASPM disabled"
+    elif [ -n "$grub_line" ]; then
+        status_warn "GRUB missing pcie_aspm=off — run: sudo ./scripts/gpu-persist-fix.sh"
+    fi
+}
+
+check_cpu_throttling() {
+    if [ "$(uname -s)" != "Linux" ]; then return; fi
+    if [ "${IS_CLOUD:-false}" = "true" ]; then
+        status_skip "CPU frequency (cloud/container)"
+        return
+    fi
+
+    local freq_dir="/sys/devices/system/cpu/cpu0/cpufreq"
+    if [ ! -d "$freq_dir" ]; then
+        status_skip "CPU frequency (cpufreq not available)"
+        return
+    fi
+
+    local cur max
+    cur=$(cat "$freq_dir/scaling_cur_freq" 2>/dev/null || echo 0)
+    max=$(cat "$freq_dir/scaling_max_freq" 2>/dev/null || echo 0)
+    if [ "$max" -gt 0 ] && [ "$cur" -gt 0 ]; then
+        local pct=$(( cur * 100 / max ))
+        local cur_mhz=$(( cur / 1000 ))
+        local max_mhz=$(( max / 1000 ))
+        if [ "$pct" -lt 50 ]; then
+            status_warn "CPU frequency throttled (${cur_mhz}MHz / ${max_mhz}MHz, ${pct}% — check cooling)"
+        else
+            status_ok "CPU frequency (${cur_mhz}MHz / ${max_mhz}MHz, ${pct}%)"
+        fi
+    fi
+}
+
+check_memory_pressure() {
+    if [ "$(uname -s)" != "Linux" ]; then return; fi
+
+    local avail total
+    avail=$(awk '/MemAvailable/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    total=$(awk '/MemTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+
+    if [ "$total" -gt 0 ] && [ "$avail" -gt 0 ]; then
+        local pct_free=$(( avail * 100 / total ))
+        local avail_gb=$(( avail / 1048576 ))
+        if [ "$pct_free" -lt 10 ]; then
+            status_warn "Memory pressure (${avail_gb}GB free, ${pct_free}% — high pressure)"
+        else
+            status_ok "Memory (${avail_gb}GB free, ${pct_free}%)"
+        fi
+    fi
+
+    # Swap check
+    local swap_total swap_free
+    swap_total=$(awk '/SwapTotal/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+    swap_free=$(awk '/SwapFree/{print $2}' /proc/meminfo 2>/dev/null || echo 0)
+
+    if [ "$swap_total" -eq 0 ]; then
+        status_warn "Swap not configured (OOM risk for large models)"
+    elif [ "$swap_total" -gt 0 ]; then
+        local swap_used=$(( swap_total - swap_free ))
+        local swap_pct=$(( swap_used * 100 / swap_total ))
+        if [ "$swap_pct" -gt 50 ]; then
+            status_warn "Swap usage ${swap_pct}% — system under memory pressure"
+        fi
+    fi
+}
+
+check_disk_health() {
+    if [ "$(uname -s)" != "Linux" ]; then return; fi
+    if [ "${IS_CLOUD:-false}" = "true" ]; then
+        status_skip "Disk SMART health (cloud/container)"
+        return
+    fi
+
+    if ! command -v smartctl &>/dev/null; then
+        status_skip "Disk SMART health (smartmontools not installed — apt install smartmontools)"
+        return
+    fi
+
+    if [ "$(id -u)" -ne 0 ]; then
+        status_skip "Disk SMART health (requires sudo)"
+        return
+    fi
+
+    local fail_count=0 ok_count=0
+    local disks
+    disks=$(lsblk -d -n -o NAME,TYPE 2>/dev/null | awk '$2=="disk" {print $1}')
+
+    for d in $disks; do
+        local health
+        health=$(smartctl -H "/dev/$d" 2>/dev/null | grep -i "overall\|SMART Health" || true)
+        if echo "$health" | grep -qi "PASSED\|OK"; then
+            ((ok_count++))
+        elif echo "$health" | grep -qi "FAILED"; then
+            ((fail_count++))
+        fi
+    done
+
+    if [ "$fail_count" -gt 0 ]; then
+        status_fail "Disk SMART health ($fail_count disk(s) FAILED — run: sudo ./scripts/disk-check-smart.sh)" "disk_health"
+    elif [ "$ok_count" -gt 0 ]; then
+        status_ok "Disk SMART health ($ok_count disk(s) passed)"
+    else
+        status_skip "Disk SMART health (no results)"
+    fi
+}
+
 check_platform_specific() {
     if [ "$(uname -s)" = "Darwin" ]; then
         if xcode-select -p &>/dev/null; then
@@ -672,6 +834,16 @@ recover_nvidia() {
     echo "  Done. A reboot may be required."
 }
 
+recover_gpu_persistence() {
+    echo "  Recovering GPU persistence fixes..."
+    if [ -x "$SCRIPT_DIR/gpu-persist-fix.sh" ]; then
+        sudo bash "$SCRIPT_DIR/gpu-persist-fix.sh"
+    else
+        echo "  ERROR: gpu-persist-fix.sh not found at $SCRIPT_DIR/"
+    fi
+    echo "  Note: A reboot may be required for full effect."
+}
+
 recover_platform() {
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "  Please run: xcode-select --install"
@@ -691,6 +863,7 @@ run_recovery() {
         disk)       recover_disk ;;
         hardware)   recover_hardware ;;
         nvidia)     recover_nvidia ;;
+        gpu_persistence) recover_gpu_persistence ;;
         uv)         recover_uv ;;
         python)     recover_python ;;
         venv)       recover_venv ;;
@@ -789,6 +962,10 @@ check_cuda_toolkit
 check_cudnn
 check_nccl
 check_gpu_kernel_tuning
+check_gpu_persistence
+check_cpu_throttling
+check_memory_pressure
+check_disk_health
 check_uv
 check_python
 check_venv
