@@ -70,6 +70,7 @@ while [[ $# -gt 0 ]]; do
         --from)         OPT_FROM="$2"; shift 2 ;;
         --doctor)       exec bash "$SCRIPT_DIR/scripts/doctor.sh" ;;
         --gpu-doctor)   exec bash "$SCRIPT_DIR/scripts/gpu-doctor.sh" ;;
+        --gpu-persist-fix) shift; exec sudo bash "$SCRIPT_DIR/scripts/gpu-persist-fix.sh" "$@" ;;
         --recover)      exec bash "$SCRIPT_DIR/scripts/doctor.sh" --recover ;;
         --uninstall)    shift; exec bash "$SCRIPT_DIR/scripts/uninstall.sh" "$@" ;;
         --help|-h)
@@ -96,6 +97,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --from <N>        Start from stage N (1-7), mark earlier stages as done"
             echo "  --doctor          Run health check"
             echo "  --gpu-doctor      GPU-specific health diagnostics"
+            echo "  --gpu-persist-fix Permanent GPU stability fixes (sudo)"
             echo "  --recover         Auto-recover broken components"
             echo "  --uninstall       Uninstall (pass additional flags after --uninstall)"
             echo "  --help            Show this help"

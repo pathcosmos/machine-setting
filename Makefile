@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras
+.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -69,3 +69,12 @@ cloud: ## Cloud/container setup (user-space only, no sudo needed)
 
 gpu-extras: ## Install GPU extras only (system tools + kernel tuning; sudo). Use when driver/CUDA already installed.
 	$(REPO_DIR)/scripts/install-nvidia.sh --extras-only
+
+gpu-doctor: ## GPU-specific health diagnostics
+	$(REPO_DIR)/scripts/gpu-doctor.sh
+
+gpu-persist-fix: ## Apply permanent GPU stability fixes (sudo required)
+	sudo $(REPO_DIR)/scripts/gpu-persist-fix.sh
+
+gpu-persist-check: ## Check GPU persistence fix status (no sudo needed)
+	$(REPO_DIR)/scripts/gpu-persist-fix.sh --check
