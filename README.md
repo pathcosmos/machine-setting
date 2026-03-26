@@ -422,6 +422,9 @@ make recover           # Auto-recover broken components
 | `make reset` | 상태 초기화 후 처음부터 |
 | `make cloud` | Cloud/container 설치 (user-space only, sudo 불필요) |
 | `make gpu-extras` | GPU 보조만 설치 (시스템 유틸 + 커널 튜닝, sudo). 드라이버/CUDA는 이미 있을 때 사용 |
+| `make gpu-doctor` | GPU 전용 건강 진단 |
+| `make gpu-persist-fix` | GPU 안정성 영구 수정 (sudo 필요) |
+| `make gpu-persist-check` | GPU 안정성 수정 상태 확인 (sudo 불필요) |
 
 ### `aienv` 동작 상세
 
@@ -581,6 +584,8 @@ make preflight
 | `--doctor` | 건강 체크 |
 | `--recover` | 자동 복구 |
 | `--uninstall` | 삭제 (추가 플래그 가능) |
+| `--gpu-doctor` | GPU 전용 건강 진단 |
+| `--gpu-persist-fix` | GPU 안정성 영구 수정 (sudo 필요) |
 
 ---
 
@@ -737,6 +742,39 @@ make cloud
 - **headless 컨테이너**: `libGL` 없으면 `opencv-python` 대신 `opencv-python-headless`만 설치
 - **nvcc 없는 런타임 컨테이너**: nvcc stub 자동 생성 (DeepSpeed import 호환)
 - **`aienv` 활성화 시**: nvcc 없으면 `DS_BUILD_OPS=0` 자동 설정
+
+### GPU Persistence & Stability
+
+PCIe 전원 관리로 인한 Xid 79 "GPU has fallen off the bus" 문제를 영구적으로 해결합니다.
+
+```bash
+# 상태 확인 (sudo 불필요)
+./scripts/gpu-persist-fix.sh --check
+make gpu-persist-check
+
+# 영구 수정 적용 (6개 항목)
+sudo ./scripts/gpu-persist-fix.sh
+make gpu-persist-fix
+
+# 변경 미리보기
+sudo ./scripts/gpu-persist-fix.sh --dry-run
+
+# 변경 되돌리기
+sudo ./scripts/gpu-persist-fix.sh --revert
+```
+
+**적용되는 6가지 수정:**
+
+| # | 항목 | 설명 |
+|---|------|------|
+| 1 | GRUB | PCIe ASPM 비활성화 + GPU 동적 전원 관리 끔 |
+| 2 | udev | NVIDIA GPU PCIe power/control을 'on'으로 강제 |
+| 3 | modprobe | NVreg_DynamicPowerManagement=0x00 설정 |
+| 4 | nvidia-persistenced | GPU persistence daemon 활성화 |
+| 5 | GPU watchdog | 5분마다 GPU 상태 점검 systemd timer |
+| 6 | PCIe power service | 부팅 시 power/control=on 강제 적용 |
+
+> **참고:** PCIe power 설정은 즉시 적용되며, 나머지는 리부트 후 완전 적용됩니다.
 
 ---
 
@@ -915,6 +953,10 @@ make doctor
 | cuDNN | dpkg 설치 상태 + **torch.backends.cudnn 런타임 검증** |
 | NCCL | dpkg 설치 상태 + **torch.cuda.nccl 런타임 검증** |
 | GPU kernel tuning | sysctl 파라미터 적용 여부 (cloud에서는 자동 skip) |
+| GPU persistence | gpu-persist-fix 6개 항목 적용 상태 |
+| CPU frequency | CPU 주파수 스로틀링 감지 |
+| Memory | 메모리 여유율 + swap 상태 |
+| Disk SMART health | 디스크 SMART 건강 상태 (smartmontools 필요) |
 | uv | uv 설치 및 버전 |
 | Python | uv로 관리되는 Python 존재 |
 | Virtual environment | venv 디렉토리, bin/python, bin/activate 존재 |
@@ -939,6 +981,10 @@ make doctor
   [OK]   cuDNN (system: 8.9.6, torch: enabled v91002)
   [OK]   NCCL (system: 2.19.3, torch: 2.27.5)
   [SKIP] GPU kernel tuning (cloud/container — managed by host)
+  [OK]   GPU persistence (all 6 fixes in place)
+  [OK]   CPU frequency (2899MHz / 3500MHz, 82%)
+  [OK]   Memory (57GB free, 91%)
+  [SKIP] Disk SMART health (smartmontools not installed — apt install smartmontools)
   [OK]   uv (uv 0.10.10)
   [OK]   Python (Python 3.12.13)
   [OK]   Virtual environment (~/ai-env, 379 packages)
@@ -969,7 +1015,7 @@ make recover
 ./scripts/doctor.sh --recover shell
 ```
 
-사용 가능한 복구 대상: `disk`, `hardware`, `nvidia`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
+사용 가능한 복구 대상: `disk`, `hardware`, `nvidia`, `gpu_persistence`, `uv`, `python`, `venv`, `packages`, `node`, `java`, `shell`, `platform`
 
 각 컴포넌트별 복구 동작:
 
@@ -977,6 +1023,7 @@ make recover
 |----------|-----------|
 | hardware | `detect-hardware.sh` 재실행 |
 | nvidia | `install-nvidia.sh` 재실행 (드라이버, CUDA, cuDNN, NCCL) |
+| gpu_persistence | `gpu-persist-fix.sh` 실행 (6개 항목 적용) |
 | uv | uv 재설치 (`curl ... \| sh`) |
 | python | uv가 없으면 먼저 설치, 그 후 `uv python install` |
 | venv | venv 재생성 + 패키지 재설치 |
@@ -1166,6 +1213,8 @@ machine_setting/
 │   ├── export-packages.sh      # venv → requirements export
 │   ├── check-env.sh            # AI environment verification
 │   ├── check-secrets.sh        # Secret leak scanner
+│   ├── gpu-doctor.sh           # GPU 전용 건강 진단 (6개 섹션 + summary 모드)
+│   ├── gpu-persist-fix.sh      # GPU 안정성 영구 수정 (GRUB, udev, modprobe, persistenced, watchdog, PCIe)
 │   ├── disk-check-smart.sh    # SMART 상세 수집
 │   ├── disk-check-smart-long.sh # SMART Extended Self-Test
 │   ├── disk-check-badblocks.sh  # 병렬 배드섹터 검사
@@ -1250,6 +1299,8 @@ make check
 | 패키지 import 실패 | `make verify` → `make recover` |
 | 설치 중간에 실패 | `./setup.sh --resume` |
 | 셸 설정이 깨짐 | `./scripts/doctor.sh --recover shell` (백업에서 복원) |
+| GPU 버스 이탈 (Xid 79) | `sudo ./scripts/gpu-persist-fix.sh` 실행 후 리부트 |
+| GPU 상태 불안정 | `./scripts/gpu-doctor.sh` 로 진단 |
 
 ---
 

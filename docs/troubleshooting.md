@@ -157,3 +157,52 @@ scripts/setup-venv.sh --path /PROJECT/path/to/ai-env
 ```bash
 aienv /PROJECT/path/to/ai-env
 ```
+
+---
+
+## GPU 하드웨어 및 안정성 문제
+
+### Xid 79 — GPU has fallen off the bus
+
+PCIe 전원 관리가 GPU를 절전 모드로 전환하면서 발생하는 문제입니다.
+
+**증상:**
+- `nvidia-smi` 실패
+- dmesg에 `NVRM: Xid 79` 메시지
+- GPU 관련 작업 중 시스템 프리즈
+
+**해결:**
+```bash
+# 1. 먼저 리부트
+sudo reboot
+
+# 2. 재발 시 영구 수정 적용
+sudo ./scripts/gpu-persist-fix.sh
+
+# 3. 리부트 후 상태 확인
+./scripts/gpu-persist-fix.sh --check
+```
+
+### GPU 온도/전력 문제
+
+```bash
+# GPU 상세 진단 (온도, 전력, 스로틀링 확인)
+./scripts/gpu-doctor.sh
+```
+
+- 온도 >= 90°C → FAIL (쿨링 점검 필요)
+- 온도 >= 80°C → WARN
+- 전력 >= 95% → WARN
+
+### PCIe 링크 속도 저하
+
+gpu-doctor.sh [3/6] PCI Bus Status 섹션에서 확인:
+- Link Speed / Width가 max보다 낮으면 WARN
+- BAR Memory disabled → GPU 버스 이탈 상태
+
+```bash
+# PCIe 상태 확인
+./scripts/gpu-doctor.sh
+# 또는
+lspci -vv -s $(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader)
+```

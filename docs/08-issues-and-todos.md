@@ -82,6 +82,7 @@ sudo snap start ollama
 | CUDA_HOME 설정 | 낮음 | ML 프레임워크 호환성 |
 | Ollama 시작 | 낮음 | 필요 시 수동 시작 |
 | 레거시 repo 정리 | 낮음 | nvidia-docker.list 제거 |
+| GPU 정기 점검 | 낮음 | `make gpu-persist-check` + `make gpu-doctor` 정기 실행 권장 |
 
 ### 추가 설치 검토
 
@@ -93,10 +94,22 @@ sudo snap start ollama
 
 ---
 
+## Resolved Issues
+
+### GPU 안정성 (2026-03-26 해결)
+
+- **문제:** RTX 5060 Ti + Z390에서 PCIe power/control=auto로 설정이 풀리며 Xid 79 발생
+- **해결:** `gpu-persist-fix.sh` 구현 — 6개 항목 영구 수정 (GRUB, udev, modprobe, persistenced, watchdog, PCIe power service)
+- **진단:** `gpu-doctor.sh` + `doctor.sh`에 통합 (GPU persistence, CPU, 메모리, 디스크 체크 추가)
+- **모니터링:** `./scripts/gpu-persist-fix.sh --check` 또는 `make gpu-persist-check`
+
+---
+
 ## Resolution Log
 
 > 이슈 해결 시 아래에 기록
 
 | 날짜 | 이슈 | 해결 방법 | 결과 |
 |------|------|----------|------|
+| 2026-03-26 | RTX 5060 Ti Xid 79 (GPU has fallen off the bus) | `gpu-persist-fix.sh` — GRUB, udev, modprobe, persistenced, watchdog, PCIe power service | 해결 |
 | | | | |
