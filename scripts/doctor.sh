@@ -610,14 +610,12 @@ check_gpu_persistence() {
             status_ok "GPU persistence (all 6 fixes in place)"
         else
             local fails=""
-            while IFS= read -r line; do
-                if echo "$line" | grep -q ":FAIL\|:WARN"; then
-                    local comp
-                    comp=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g' | cut -d: -f1)
-                    fails="${fails:+$fails, }$comp"
-                fi
-            done <<< "$check_output"
-            status_warn "GPU persistence (${check_exit}/6 issues${fails:+: $fails} — run: sudo ./scripts/gpu-persist-fix.sh)"
+            fails=$(echo "$check_output" | sed 's/\x1b\[[0-9;]*m//g' | grep -E ':FAIL|:WARN' | cut -d: -f1 | paste -sd', ' || true)
+            if [ "$check_exit" -ge 4 ]; then
+                status_fail "GPU persistence (${check_exit}/6 critical${fails:+: $fails} — Run: sudo ./scripts/gpu-persist-fix.sh)" "gpu_persistence"
+            else
+                status_warn "GPU persistence (${check_exit}/6 issues${fails:+: $fails} — Run: sudo ./scripts/gpu-persist-fix.sh)"
+            fi
         fi
         return
     fi
@@ -649,7 +647,12 @@ check_gpu_persistence() {
     if [ -n "$grub_line" ] && echo "$grub_line" | grep -q "pcie_aspm=off"; then
         status_ok "GRUB PCIe ASPM disabled"
     elif [ -n "$grub_line" ]; then
-        status_warn "GRUB missing pcie_aspm=off — run: sudo ./scripts/gpu-persist-fix.sh"
+        status_warn "GRUB missing pcie_aspm=off — Run: sudo ./scripts/gpu-persist-fix.sh"
+    fi
+
+    # Ensure at least one status message is output
+    if [ -z "$gpu_bus_ids" ] && [ -z "$grub_line" ]; then
+        status_skip "GPU persistence (nvidia-smi unavailable, cannot check)"
     fi
 }
 
@@ -678,6 +681,8 @@ check_cpu_throttling() {
         else
             status_ok "CPU frequency (${cur_mhz}MHz / ${max_mhz}MHz, ${pct}%)"
         fi
+    else
+        status_skip "CPU frequency (frequency data unavailable)"
     fi
 }
 
@@ -696,6 +701,9 @@ check_memory_pressure() {
         else
             status_ok "Memory (${avail_gb}GB free, ${pct_free}%)"
         fi
+    else
+        status_skip "Memory (memory info unavailable)"
+        return
     fi
 
     # Swap check
@@ -705,7 +713,7 @@ check_memory_pressure() {
 
     if [ "$swap_total" -eq 0 ]; then
         status_warn "Swap not configured (OOM risk for large models)"
-    elif [ "$swap_total" -gt 0 ]; then
+    else
         local swap_used=$(( swap_total - swap_free ))
         local swap_pct=$(( swap_used * 100 / swap_total ))
         if [ "$swap_pct" -gt 50 ]; then
@@ -737,7 +745,7 @@ check_disk_health() {
 
     for d in $disks; do
         local health
-        health=$(smartctl -H "/dev/$d" 2>/dev/null | grep -i "overall\|SMART Health" || true)
+        health=$(timeout 10 smartctl -H "/dev/$d" 2>/dev/null | grep -i "overall\|SMART Health" || true)
         if echo "$health" | grep -qi "PASSED\|OK"; then
             ((ok_count++))
         elif echo "$health" | grep -qi "FAILED"; then
@@ -746,7 +754,7 @@ check_disk_health() {
     done
 
     if [ "$fail_count" -gt 0 ]; then
-        status_fail "Disk SMART health ($fail_count disk(s) FAILED — run: sudo ./scripts/disk-check-smart.sh)" "disk_health"
+        status_fail "Disk SMART health ($fail_count disk(s) FAILED — Run: sudo ./scripts/disk-check-smart.sh)" "disk_health"
     elif [ "$ok_count" -gt 0 ]; then
         status_ok "Disk SMART health ($ok_count disk(s) passed)"
     else
@@ -837,11 +845,14 @@ recover_nvidia() {
 recover_gpu_persistence() {
     echo "  Recovering GPU persistence fixes..."
     if [ -x "$SCRIPT_DIR/gpu-persist-fix.sh" ]; then
-        sudo bash "$SCRIPT_DIR/gpu-persist-fix.sh"
+        if sudo bash "$SCRIPT_DIR/gpu-persist-fix.sh"; then
+            echo "  Done. A reboot may be required for full effect."
+        else
+            echo "  ERROR: gpu-persist-fix.sh failed (exit $?)."
+        fi
     else
-        echo "  ERROR: gpu-persist-fix.sh not found at $SCRIPT_DIR/"
+        echo "  ERROR: gpu-persist-fix.sh not found or not executable at $SCRIPT_DIR/"
     fi
-    echo "  Note: A reboot may be required for full effect."
 }
 
 recover_platform() {
