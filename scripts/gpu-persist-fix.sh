@@ -250,16 +250,39 @@ After=nvidia-persistenced.service
 
 [Service]
 Type=oneshot
+# Attempt GPU recovery via module reload; log results to journal
 ExecStart=/bin/bash -c '\
-    if ! nvidia-smi &>/dev/null; then \
-        echo "GPU WATCHDOG: nvidia-smi failed, attempting recovery..." | systemd-cat -p err -t nvidia-watchdog; \
-        rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || true; \
-        sleep 2; \
-        modprobe nvidia; \
-        modprobe nvidia_uvm; \
-        modprobe nvidia_drm; \
+    if nvidia-smi &>/dev/null; then \
+        exit 0; \
+    fi; \
+    echo "GPU WATCHDOG: nvidia-smi failed, attempting recovery..." | systemd-cat -p err -t nvidia-watchdog; \
+    echo "GPU WATCHDOG: Attempting module reload..." | systemd-cat -p notice -t nvidia-watchdog; \
+    rmmod nvidia_uvm 2>/dev/null || true; \
+    rmmod nvidia_drm 2>/dev/null || true; \
+    rmmod nvidia_modeset 2>/dev/null || true; \
+    rmmod nvidia 2>/dev/null || true; \
+    sleep 3; \
+    modprobe nvidia; \
+    modprobe nvidia_uvm; \
+    modprobe nvidia_drm modeset=1; \
+    sleep 2; \
+    if nvidia-smi &>/dev/null; then \
+        echo "GPU WATCHDOG: Recovery successful" | systemd-cat -p info -t nvidia-watchdog; \
+    else \
+        echo "GPU WATCHDOG: Module reload failed. Attempting PCIe reset..." | systemd-cat -p warning -t nvidia-watchdog; \
+        GPU_PCI=$(lspci -D 2>/dev/null | grep -i "nvidia.*vga\|nvidia.*3d" | head -1 | cut -d" " -f1 || true); \
+        if [ -n "$GPU_PCI" ] && [ -f "/sys/bus/pci/devices/$GPU_PCI/remove" ]; then \
+            echo 1 > "/sys/bus/pci/devices/$GPU_PCI/remove" 2>/dev/null || true; \
+            sleep 2; \
+            echo 1 > /sys/bus/pci/rescan 2>/dev/null || true; \
+            sleep 3; \
+            modprobe nvidia; \
+            modprobe nvidia_uvm; \
+            modprobe nvidia_drm modeset=1; \
+            sleep 2; \
+        fi; \
         if nvidia-smi &>/dev/null; then \
-            echo "GPU WATCHDOG: Recovery successful" | systemd-cat -p info -t nvidia-watchdog; \
+            echo "GPU WATCHDOG: Recovery successful after PCIe rescan" | systemd-cat -p info -t nvidia-watchdog; \
         else \
             echo "GPU WATCHDOG: Recovery FAILED — reboot required" | systemd-cat -p crit -t nvidia-watchdog; \
         fi; \
@@ -274,6 +297,7 @@ Description=Run NVIDIA GPU Health Watchdog every 5 minutes
 OnBootSec=60
 OnUnitActiveSec=300
 AccuracySec=30
+Persistent=true
 
 [Install]
 WantedBy=timers.target
@@ -520,21 +544,20 @@ else
     # Apply immediate fixes (no reboot needed for these)
     if [ "$DRY_RUN" = false ]; then
         echo -e "${CYAN}[ACTION]${NC} Applying PCIe power/control=on immediately..."
-        local immediate_count=0
+        IMMEDIATE_COUNT=0
         for d in /sys/bus/pci/devices/*/; do
             if [ -f "$d/vendor" ] && [ "$(cat "$d/vendor" 2>/dev/null)" = "0x10de" ]; then
-                local c
-                c=$(cat "$d/class" 2>/dev/null || true)
-                if [[ "$c" == 0x0300* ]] || [[ "$c" == 0x0302* ]]; then
+                DEV_CLASS=$(cat "$d/class" 2>/dev/null || true)
+                if [[ "$DEV_CLASS" == 0x0300* ]] || [[ "$DEV_CLASS" == 0x0302* ]]; then
                     if echo on > "$d/power/control" 2>/dev/null; then
-                        ((immediate_count++))
+                        ((IMMEDIATE_COUNT++)) || true
                     fi
                 fi
             fi
         done
         # Reload udev rules and trigger for NVIDIA devices
         udevadm trigger --subsystem-match=pci --attr-match=vendor=0x10de 2>/dev/null || true
-        echo -e "${GREEN}[  OK  ]${NC} ${immediate_count} GPU(s) PCIe power/control set to 'on'"
+        echo -e "${GREEN}[  OK  ]${NC} ${IMMEDIATE_COUNT} GPU(s) PCIe power/control set to 'on'"
     fi
 
     echo ""

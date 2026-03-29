@@ -34,13 +34,30 @@ if ! command -v nvidia-smi &>/dev/null; then
     exit 2
 fi
 
-# --- Collect GPU info ---
+# --- Collect GPU info (nvidia-smi with lspci/sysfs fallback) ---
+NVIDIA_SMI_EXIT=0
+nvidia-smi &>/dev/null || NVIDIA_SMI_EXIT=$?
+
 GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
 DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
 BUS_ID=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null | head -1 || true)
 GPU_UUID=$(nvidia-smi --query-gpu=uuid --format=csv,noheader 2>/dev/null | head -1 || true)
-NVIDIA_SMI_EXIT=0
-nvidia-smi &>/dev/null || NVIDIA_SMI_EXIT=$?
+
+# Fallback: when nvidia-smi can't communicate, get info from lspci/sysfs
+# nvidia-smi may output error text like "No devices were found" instead of empty
+if [ "$NVIDIA_SMI_EXIT" -ne 0 ] || [ -z "$GPU_NAME" ] || echo "$GPU_NAME" | grep -qi "no devices\|error\|failed\|unable"; then
+    GPU_NAME="" ; DRIVER_VER="" ; BUS_ID="" ; GPU_UUID=""
+    if command -v lspci &>/dev/null; then
+        LSPCI_GPU_LINE=$(lspci -D 2>/dev/null | grep -i 'nvidia' | grep -iE 'vga|3d|display' | head -1 || true)
+        if [ -n "$LSPCI_GPU_LINE" ]; then
+            [ -z "$BUS_ID" ] && BUS_ID=$(echo "$LSPCI_GPU_LINE" | awk '{print $1}')
+            [ -z "$GPU_NAME" ] && GPU_NAME=$(echo "$LSPCI_GPU_LINE" | sed 's/^[^ ]* [^:]*: //' | sed 's/ (rev .*)$//')
+        fi
+    fi
+    if [ -z "$DRIVER_VER" ] && [ -f /proc/driver/nvidia/version ]; then
+        DRIVER_VER=$(grep -oP 'NVRM version: NVIDIA.*\s+\K[0-9]+\.[0-9.]+' /proc/driver/nvidia/version 2>/dev/null || true)
+    fi
+fi
 
 # --- Status tracking ---
 ISSUE_COUNT=0
@@ -181,6 +198,17 @@ check_pci_status() {
     if ! command -v lspci &>/dev/null; then
         item_warn "lspci" "not found (pciutils 패키지 필요)"
         add_action "INFO" "PCI 진단 불가 — sudo apt install pciutils"
+        return
+    fi
+
+    # If BUS_ID is empty (nvidia-smi failed), discover from lspci
+    if [ -z "$BUS_ID" ]; then
+        BUS_ID=$(lspci -D 2>/dev/null | grep -i 'nvidia' | grep -iE 'vga|3d|display' | head -1 | awk '{print $1}' || true)
+    fi
+
+    if [ -z "$BUS_ID" ]; then
+        item_fail "PCI device" "NVIDIA GPU not found via lspci"
+        add_action "CRITICAL" "GPU가 PCI 버스에서 완전히 사라짐 — 물리적 점검 필요"
         return
     fi
 
@@ -447,7 +475,7 @@ if [ "$MODE" = "summary" ]; then
     SUMMARY_ISSUES=()
 
     if [ "$NVIDIA_SMI_EXIT" -ne 0 ]; then
-        echo "FAIL GPU unreachable (nvidia-smi exit $NVIDIA_SMI_EXIT — reboot required)"
+        echo "FAIL ${GPU_NAME:-unknown GPU} unreachable (nvidia-smi exit $NVIDIA_SMI_EXIT — reboot required)"
         exit 2
     fi
 
