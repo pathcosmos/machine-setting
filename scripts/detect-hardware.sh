@@ -26,10 +26,14 @@ case "$OS_TYPE" in
                 HAS_GPU=true
                 GPU_BACKEND="cuda"
                 GPU_COUNT=$(echo "$GPU_INFO" | wc -l)
+                # Try nvidia-smi first, fall back to lspci device name
                 if command -v nvidia-smi &>/dev/null; then
-                    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || echo "Unknown NVIDIA GPU")
-                else
-                    GPU_NAME=$(echo "$GPU_INFO" | head -1 | sed 's/.*: //')
+                    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)
+                fi
+                # If nvidia-smi failed, returned empty, or error text (e.g. Xid 79), parse from lspci
+                if [ -z "$GPU_NAME" ] || echo "$GPU_NAME" | grep -qi "no devices\|error\|failed\|unable"; then
+                    GPU_NAME=""
+                    GPU_NAME=$(echo "$GPU_INFO" | head -1 | sed 's/.*: //' | sed 's/ (rev .*)$//')
                 fi
             fi
         fi

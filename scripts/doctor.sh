@@ -620,9 +620,25 @@ check_gpu_persistence() {
         return
     fi
 
-    # Fallback: dynamic bus ID detection via nvidia-smi
+    # Fallback: dynamic bus ID detection via nvidia-smi, then lspci/sysfs
     local gpu_bus_ids
     gpu_bus_ids=$(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null || true)
+
+    # If nvidia-smi fails (Xid 79 etc.), discover GPU bus IDs from sysfs
+    if [ -z "$gpu_bus_ids" ]; then
+        for d in /sys/bus/pci/devices/*/; do
+            if [ -f "$d/vendor" ] && [ "$(cat "$d/vendor" 2>/dev/null)" = "0x10de" ]; then
+                local dev_class
+                dev_class=$(cat "$d/class" 2>/dev/null || true)
+                if [[ "$dev_class" == 0x0300* ]] || [[ "$dev_class" == 0x0302* ]]; then
+                    local dev_id
+                    dev_id=$(basename "$d")
+                    gpu_bus_ids="${gpu_bus_ids:+$gpu_bus_ids\n}$dev_id"
+                fi
+            fi
+        done
+        gpu_bus_ids=$(echo -e "$gpu_bus_ids")
+    fi
 
     if [ -n "$gpu_bus_ids" ]; then
         while IFS= read -r bus_id; do
@@ -652,7 +668,7 @@ check_gpu_persistence() {
 
     # Ensure at least one status message is output
     if [ -z "$gpu_bus_ids" ] && [ -z "$grub_line" ]; then
-        status_skip "GPU persistence (nvidia-smi unavailable, cannot check)"
+        status_skip "GPU persistence (cannot discover GPU bus IDs)"
     fi
 }
 
