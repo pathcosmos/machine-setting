@@ -83,6 +83,7 @@ sudo snap start ollama
 | Ollama 시작 | 낮음 | 필요 시 수동 시작 |
 | 레거시 repo 정리 | 낮음 | nvidia-docker.list 제거 |
 | GPU 정기 점검 | 낮음 | `make gpu-persist-check` + `make gpu-doctor` 정기 실행 권장 |
+| CUDA 프로세스 격리 | 중간 | PyTorch + Ollama GPU 공유 시 3-tier 방어 적용 → [10-cuda-defense-patterns.md](./10-cuda-defense-patterns.md) |
 
 ### 추가 설치 검토
 

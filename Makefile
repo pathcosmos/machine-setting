@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check
+.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -78,3 +78,9 @@ gpu-persist-fix: ## Apply permanent GPU stability fixes (sudo required)
 
 gpu-persist-check: ## Check GPU persistence fix status (no sudo needed)
 	$(REPO_DIR)/scripts/gpu-persist-fix.sh --check
+
+cuda-defense-check: ## CUDA process-level health diagnostics (Ollama, VRAM, zombie procs)
+	$(REPO_DIR)/scripts/cuda-defense-check.sh
+
+cuda-defense-summary: ## CUDA defense quick status (one-line)
+	$(REPO_DIR)/scripts/cuda-defense-check.sh --summary

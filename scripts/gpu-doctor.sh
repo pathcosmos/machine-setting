@@ -98,7 +98,7 @@ get_kernel_log() {
 }
 
 check_driver_communication() {
-    section_header "1/6" "Driver Communication"
+    section_header "1/7" "Driver Communication"
 
     if [ "$NVIDIA_SMI_EXIT" -ne 0 ]; then
         item_fail "nvidia-smi" "exit code $NVIDIA_SMI_EXIT (cannot communicate with GPU)"
@@ -129,7 +129,7 @@ check_driver_communication() {
 }
 
 check_xid_errors() {
-    section_header "2/6" "Xid Errors (last 24h)"
+    section_header "2/7" "Xid Errors (last 24h)"
 
     local klog
     klog=$(get_kernel_log "24 hours ago")
@@ -193,7 +193,7 @@ check_xid_errors() {
 }
 
 check_pci_status() {
-    section_header "3/6" "PCI Bus Status"
+    section_header "3/7" "PCI Bus Status"
 
     if ! command -v lspci &>/dev/null; then
         item_warn "lspci" "not found (pciutils 패키지 필요)"
@@ -258,7 +258,7 @@ check_pci_status() {
 }
 
 check_thermal_power() {
-    section_header "4/6" "Thermal & Power"
+    section_header "4/7" "Thermal & Power"
 
     if [ "$NVIDIA_SMI_EXIT" -ne 0 ]; then
         item_fail "Status" "nvidia-smi 통신 불가 — 측정 불가"
@@ -317,7 +317,7 @@ check_thermal_power() {
 }
 
 check_driver_compat() {
-    section_header "5/6" "Driver Compatibility"
+    section_header "5/7" "Driver Compatibility"
 
     local arch="Unknown"
     local min_driver="0"
@@ -389,7 +389,7 @@ check_driver_compat() {
 }
 
 check_ecc_status() {
-    section_header "6/6" "ECC Status"
+    section_header "6/7" "ECC Status"
 
     if [ "$NVIDIA_SMI_EXIT" -ne 0 ]; then
         item_fail "Status" "nvidia-smi 통신 불가"
@@ -425,6 +425,60 @@ check_ecc_status() {
     if [ -n "$retired" ] && [ "$retired" != "[N/A]" ] && [ "$retired" != "No" ]; then
         item_warn "⚠ Retired Pages" "pending: $retired"
         add_action "WARNING" "GPU 메모리 페이지 퇴역 대기 중 — 리부트 후 적용됨"
+    fi
+}
+
+check_cuda_process_health() {
+    section_header "7/7" "CUDA Process Health"
+
+    if [ "$NVIDIA_SMI_EXIT" -ne 0 ]; then
+        item_fail "Status" "nvidia-smi 통신 불가 — 프로세스 점검 불가"
+        return
+    fi
+
+    # nvidia-smi response time
+    local start_ns end_ns resp_ms
+    start_ns=$(date +%s%N)
+    nvidia-smi --query-gpu=name --format=csv,noheader &>/dev/null
+    end_ns=$(date +%s%N)
+    resp_ms=$(( (end_ns - start_ns) / 1000000 ))
+
+    if [ "$resp_ms" -gt 3000 ]; then
+        item_warn "⚠ nvidia-smi 응답" "${resp_ms}ms (>3s — 드라이버 부하)"
+        add_action "WARNING" "nvidia-smi 응답 지연 — CUDA 프로세스 hang 가능성"
+    else
+        item_ok "nvidia-smi 응답" "${resp_ms}ms"
+    fi
+
+    # Zombie CUDA processes
+    local gpu_procs zombie=0 total=0
+    gpu_procs=$(nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader,nounits 2>/dev/null || true)
+    if [ -n "$gpu_procs" ]; then
+        while IFS=', ' read -r pid _mem; do
+            pid=$(echo "$pid" | tr -d ' ')
+            [ -z "$pid" ] && continue
+            total=$((total + 1))
+            kill -0 "$pid" 2>/dev/null || zombie=$((zombie + 1))
+        done <<< "$gpu_procs"
+    fi
+
+    if [ "$zombie" -gt 0 ]; then
+        item_fail "좀비 프로세스" "${zombie}/${total} — VRAM 누수 원인"
+        add_action "CRITICAL" "좀비 CUDA 프로세스 정리 필요 → cuda-defense-check.sh 실행"
+    else
+        item_ok "CUDA 프로세스" "${total}개 활성, 좀비 없음"
+    fi
+
+    # Ollama status (if installed)
+    if command -v ollama &>/dev/null; then
+        if pgrep -f "ollama" &>/dev/null; then
+            if curl -sf --max-time 3 http://localhost:11434/ &>/dev/null; then
+                item_ok "Ollama" "정상 (API 응답 OK)"
+            else
+                item_fail "Ollama" "프로세스 실행 중이나 API 무응답 — hang 상태"
+                add_action "CRITICAL" "Ollama hang → pkill -9 -f ollama && ollama serve"
+            fi
+        fi
     fi
 }
 
@@ -490,6 +544,25 @@ if [ "$MODE" = "summary" ]; then
 
     temp=$(nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 || true)
 
+    # CUDA process health (zombie detection)
+    s_zombie=0
+    s_gpu_procs=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null || true)
+    if [ -n "$s_gpu_procs" ]; then
+        while read -r s_pid; do
+            s_pid=$(echo "$s_pid" | tr -d ' ')
+            [ -z "$s_pid" ] && continue
+            kill -0 "$s_pid" 2>/dev/null || s_zombie=$((s_zombie + 1))
+        done <<< "$s_gpu_procs"
+        [ "$s_zombie" -gt 0 ] && SUMMARY_ISSUES+=("zombie CUDA procs: $s_zombie")
+    fi
+
+    # Ollama hang detection
+    if command -v ollama &>/dev/null && pgrep -f "ollama" &>/dev/null; then
+        if ! curl -sf --max-time 3 http://localhost:11434/ &>/dev/null; then
+            SUMMARY_ISSUES+=("Ollama hung")
+        fi
+    fi
+
     if [ ${#SUMMARY_ISSUES[@]} -gt 0 ]; then
         detail=$(IFS=', '; echo "${SUMMARY_ISSUES[*]}")
         echo "WARN $GPU_NAME ($detail — run gpu-doctor.sh)"
@@ -511,4 +584,5 @@ check_pci_status
 check_thermal_power
 check_driver_compat
 check_ecc_status
+check_cuda_process_health
 print_summary

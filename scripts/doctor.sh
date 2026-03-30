@@ -672,6 +672,23 @@ check_gpu_persistence() {
     fi
 }
 
+check_cuda_process() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${HAS_GPU:-false}" != "true" ] || [ "${GPU_BACKEND:-none}" != "cuda" ]; then
+        return
+    fi
+
+    if [ -x "$SCRIPT_DIR/cuda-defense-check.sh" ]; then
+        local cuda_summary cuda_exit=0
+        cuda_summary=$("$SCRIPT_DIR/cuda-defense-check.sh" --summary 2>/dev/null) || cuda_exit=$?
+
+        case "$cuda_exit" in
+            0) status_ok "CUDA process health ($cuda_summary)" ;;
+            1) status_warn "CUDA process health ($cuda_summary → run 'make cuda-defense-check')" ;;
+            *) status_fail "CUDA process health ($cuda_summary)" "cuda_process" ;;
+        esac
+    fi
+}
+
 check_cpu_throttling() {
     if [ "$(uname -s)" != "Linux" ]; then return; fi
     if [ "${IS_CLOUD:-false}" = "true" ]; then
@@ -990,6 +1007,7 @@ check_cudnn
 check_nccl
 check_gpu_kernel_tuning
 check_gpu_persistence
+check_cuda_process
 check_cpu_throttling
 check_memory_pressure
 check_disk_health

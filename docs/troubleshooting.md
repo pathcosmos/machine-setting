@@ -206,3 +206,23 @@ gpu-doctor.sh [3/6] PCI Bus Status 섹션에서 확인:
 # 또는
 lspci -vv -s $(nvidia-smi --query-gpu=pci.bus_id --format=csv,noheader)
 ```
+
+### CUDA 프로세스 격리 문제 (PyTorch + Ollama 공존)
+
+Custom PyTorch 모델과 Ollama가 같은 GPU를 공유할 때 발생하는 문제.
+상세 방어 패턴: [10-cuda-defense-patterns.md](./10-cuda-defense-patterns.md)
+
+**Ollama가 갑자기 죽음 (custom model CUDA 실행 후)**
+- 원인: custom model의 CUDA 오류가 드라이버를 오염시켜 Ollama도 사망
+- 대응: Tier 1 — subprocess 격리로 CUDA 코드를 별도 프로세스에서 실행
+- 진단: `make cuda-defense-check`
+
+**nvidia-smi 무응답 (GPU 프로세스 실행 후)**
+- 원인: 심각한 CUDA 드라이버 오염 (cudaErrorLaunchFailure 등)
+- 대응: Tier 3 — `nvidia-smi --gpu-reset -i 0` 또는 리부팅
+- 진단: `./scripts/gpu-doctor.sh` (Section [7/7] CUDA Process Health)
+
+**VRAM 누수 (모델 언로드 후에도 메모리 미해제)**
+- 원인: 좀비 CUDA 프로세스 또는 cleanup 미수행
+- 대응: Tier 2 — `gc.collect()` + `torch.cuda.empty_cache()`, 좀비 프로세스 kill
+- 진단: `make cuda-defense-check` → [1/4] CUDA 프로세스 상태 섹션
