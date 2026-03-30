@@ -54,6 +54,14 @@ ollama list
 
 - `snap.ollama.listener.service` → enabled
 
+### GPU 공유 주의사항
+
+Ollama와 PyTorch 직접 추론을 동시에 사용할 경우 CUDA 드라이버 오염 위험이 있습니다.
+프로세스 격리, 메모리 정리, 시스템 복구의 3-tier 방어 패턴 적용을 권장합니다.
+
+- 진단: `make cuda-defense-check`
+- 상세 패턴: [10-cuda-defense-patterns.md](./10-cuda-defense-patterns.md)
+
 ## 3. RAG 인프라
 
 ### ChromaDB (벡터 데이터베이스)
