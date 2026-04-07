@@ -6,12 +6,12 @@
 ## 시스템 구성
 
 ### Claude Channel (Telegram)
-- 봇: `@<redacted-bot>`
+- 봇: (access.json 참조)
 - 실행: tmux 세션 `claude-telegram` → `claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official`
 - 래퍼: `~/.claude/claude-channels-wrapper.sh` (launchd: `com.anthropic.claude-channels`)
 - 플러그인: `~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram`
 - 접근 제어: `~/.claude/plugins/marketplaces/claude-plugins-official/external_plugins/telegram/access.json`
-- 허용 사용자: <redacted-id> (DM allowlist)
+- 허용 사용자: access.json에서 관리 (DM allowlist)
 - **주의**: `--channels`는 인터랙티브 TUI 전용. launchd에서 직접 실행 불가 → tmux로 PTY 제공 필수.
 - **토큰 격리**: 봇 토큰은 `.env`가 아닌 `~/.claude/channels/telegram/.bot-token`에 보관. 래퍼만 환경변수로 주입하여 채널 세션만 polling. 일반 세션은 토큰 없어서 플러그인 자동 종료. (상세: `docs/11-telegram-channel-polling-fix.md`)
 
