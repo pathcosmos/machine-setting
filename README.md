@@ -1301,6 +1301,9 @@ make check
 | 셸 설정이 깨짐 | `./scripts/doctor.sh --recover shell` (백업에서 복원) |
 | GPU 버스 이탈 (Xid 79) | `sudo ./scripts/gpu-persist-fix.sh` 실행 후 리부트 |
 | GPU 상태 불안정 | `./scripts/gpu-doctor.sh` 로 진단 |
+| `make venv`가 core 단계 직후 즉시 종료 | 옛 6-stage state 파일 잔재. `mv ~/.machine_setting/install.state{,.bak}` 후 재실행 ([7-A](docs/troubleshooting.md#7-a-체크포인트-state-파일-스키마-mismatch--make-venv-즉시-종료-stage-rename-잔재)) |
+| cx-Oracle `pkg_resources` 빌드 실패 | setuptools 70+ 분리 이슈. 자동 fix됨 — 수동시 `uv pip install "setuptools<70" wheel` 후 `--no-build-isolation` ([7-B](docs/troubleshooting.md#7-b-cx-oracle-빌드-실패--modulenotfounderror-no-module-named-pkg_resources)) |
+| 검증 단계가 `torch: not installed` 오탐 | bash quote escape 버그. 자동 fix됨 — 실제 설치 여부는 `~/ai-env/bin/python -c 'import torch'`로 확인 ([7-C](docs/troubleshooting.md#7-c-setup-venvsh-검증-단계가-torch-not-installed-false-negative)) |
 
 ---
 

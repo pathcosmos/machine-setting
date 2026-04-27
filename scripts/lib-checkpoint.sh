@@ -35,10 +35,10 @@ EOF
 # Read a value from state file.
 # Usage: val=$(checkpoint_read_key "STAGE_1_HARDWARE")
 checkpoint_read_key() {
+    # Returns empty string for missing keys without triggering set -e under pipefail.
     local key="$1"
-    if [ -f "$CHECKPOINT_STATE" ]; then
-        grep "^${key}=" "$CHECKPOINT_STATE" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"'
-    fi
+    [ -f "$CHECKPOINT_STATE" ] || return 0
+    grep "^${key}=" "$CHECKPOINT_STATE" 2>/dev/null | head -1 | cut -d'=' -f2- | tr -d '"' || true
 }
 
 # Write/update a key in the state file.

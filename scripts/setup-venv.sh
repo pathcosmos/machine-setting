@@ -100,9 +100,10 @@ for group in $PACKAGE_GROUPS; do
         echo ""
         echo "  Installing $group packages..."
 
-        # cx-Oracle requires setuptools at build time (uv build isolation issue)
+        # cx-Oracle build needs pkg_resources, which setuptools>=70 ships separately.
+        # Pin <70 + wheel in the venv, then build cx-Oracle without uv's isolated env.
         if grep -q "cx-Oracle" "$REQ_FILE" 2>/dev/null; then
-            $UV_PIP install $INSTALL_ARGS setuptools 2>&1 | tail -1
+            $UV_PIP install $INSTALL_ARGS "setuptools<70" wheel 2>&1 | tail -1
             $UV_PIP install $INSTALL_ARGS cx-Oracle --no-build-isolation 2>&1 | tail -1
         fi
 
@@ -285,19 +286,21 @@ echo ""
 TOTAL=$(uv pip list --python "$VENV_PATH/bin/python" 2>/dev/null | tail -n +3 | wc -l)
 echo "  Installed: $TOTAL packages"
 
-# Quick sanity checks
+# Quick sanity checks (heredoc avoids bash quote-escape pitfalls in -c strings)
 echo "  Verifying key packages..."
-"$VENV_PATH/bin/python" -c "
+"$VENV_PATH/bin/python" - 2>/dev/null <<'PYEOF' || echo "    torch: not installed"
+import warnings
+warnings.filterwarnings("ignore")
 import torch
 backends = []
-if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-    backends.append('MPS')
+if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    backends.append("MPS")
 if torch.cuda.is_available():
-    backends.append(f'CUDA {torch.version.cuda}')
+    backends.append(f"CUDA {torch.version.cuda}")
 if not backends:
-    backends.append('CPU only')
-print(f'    torch {torch.__version__} ({", ".join(backends)})')
-" 2>/dev/null || echo "    torch: not installed"
+    backends.append("CPU only")
+print(f"    torch {torch.__version__} ({', '.join(backends)})")
+PYEOF
 "$VENV_PATH/bin/python" -c "import transformers; print(f'    transformers {transformers.__version__}')" 2>/dev/null || echo "    transformers: not installed"
 "$VENV_PATH/bin/python" -c "import anthropic; print(f'    anthropic {anthropic.__version__}')" 2>/dev/null || echo "    anthropic: not installed"
 

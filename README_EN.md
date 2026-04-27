@@ -1293,6 +1293,9 @@ make check
 | Shell config broken | `./scripts/doctor.sh --recover shell` (restores from backup) |
 | GPU fell off bus (Xid 79) | Run `sudo ./scripts/gpu-persist-fix.sh` then reboot |
 | GPU instability | Diagnose with `./scripts/gpu-doctor.sh` |
+| `make venv` exits right after the core stage | Stale 6-stage state file. `mv ~/.machine_setting/install.state{,.bak}` and rerun (see [docs/troubleshooting.md §7-A](docs/troubleshooting.md#7-a-체크포인트-state-파일-스키마-mismatch--make-venv-즉시-종료-stage-rename-잔재)) |
+| cx-Oracle build fails with `pkg_resources` | setuptools 70+ split. Fixed automatically — manual workaround: `uv pip install "setuptools<70" wheel`, then `--no-build-isolation` (see [§7-B](docs/troubleshooting.md#7-b-cx-oracle-빌드-실패--modulenotfounderror-no-module-named-pkg_resources)) |
+| Verify step prints `torch: not installed` despite a working install | bash quote-escape bug. Fixed automatically — confirm with `~/ai-env/bin/python -c 'import torch'` (see [§7-C](docs/troubleshooting.md#7-c-setup-venvsh-검증-단계가-torch-not-installed-false-negative)) |
 
 ---
 
