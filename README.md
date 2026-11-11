@@ -19,6 +19,7 @@ Portable AI development environment system. One command to set up Python + AI/ML
 - [CLI Options](#cli-options)
 - [Profiles](#profiles)
 - [GPU Support](#gpu-support)
+- [Server Extras](#server-extras)
 - [Pre-flight Check](#pre-flight-check)
 - [Reinstallation](#reinstallation)
 - [Uninstall](#uninstall)
@@ -185,7 +186,7 @@ venv 생성 후 패키지 그룹별로 설치합니다.
 | core | `requirements-core.txt` | transformers, accelerate, peft, wandb, numpy, mlflow, tensorboard, optuna 등 |
 | data | `requirements-data.txt` | pandas, polars, duckdb, SQLAlchemy, psycopg2, pypdf, openpyxl 등 |
 | web | `requirements-web.txt` | fastapi, uvicorn, httpx, gradio, cryptography 등 |
-| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes, deepspeed, vllm, pynvml, nvitop 등 |
+| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes, deepspeed, nvidia-ml-py, nvitop 등 |
 | mps | `requirements-mps.txt` | torch (Apple Silicon MPS 포함) |
 | cpu | `requirements-cpu.txt` | torch CPU-only 빌드 |
 
@@ -197,7 +198,7 @@ GPU/MPS/CPU 패키지는 [1/7]에서 감지된 하드웨어에 따라 자동으�
 
 | 카테고리 | 패키지 | 설명 |
 |----------|--------|------|
-| **LLM Provider** | `anthropic`, `openai`, `google-generativeai` + Google API 7개 | Claude, GPT, Gemini API |
+| **LLM Provider** | `anthropic`, `openai`, `google-genai` + Google API 6개 | Claude, GPT, Gemini API |
 | **LangChain** | `langchain`, `langchain-community`, `langchain-core`, `langchain-huggingface`, `langgraph`, `langgraph-checkpoint`, `langgraph-prebuilt`, `langgraph-sdk`, `langsmith` | 에이전트/체인/그래프 |
 | **HuggingFace** | `transformers`, `datasets`, `tokenizers`, `huggingface_hub`, `accelerate`, `peft`, `trl`, `sentence-transformers`, `safetensors`, `hf-xet`, `sentencepiece` | 모델 학습/추론/파인튜닝 |
 | **Classical ML** | `scikit-learn`, `scipy`, `xgboost`, `lightgbm`, `numba`, `llvmlite` | 전통 머신러닝 |
@@ -224,8 +225,8 @@ GPU/MPS/CPU 패키지는 [1/7]에서 감지된 하드웨어에 따라 자동으�
 | **CUDA Bindings** | `cuda-bindings`, `cuda-pathfinder` | CUDA Python 바인딩 |
 | **GPU 가속** | `flash-attn`, `bitsandbytes`, `onnxruntime-gpu` | FlashAttention/양자화/GPU 추론 |
 | **분산 학습** | `deepspeed`, `pytorch-lightning`, `torchmetrics` | 멀티 GPU 학습 |
-| **GPU 모니터링** | `pynvml`, `gpustat`, `nvitop` | GPU 사용량/온도 모니터링 |
-| **추론 최적화** | `vllm`, `optimum` | LLM 고속 서빙/모델 최적화 |
+| **GPU 모니터링** | `nvidia-ml-py`, `gpustat`, `nvitop` | GPU 사용량/온도 모니터링 |
+| **추론 최적화** | `optimum` (`vllm`: optional, separate venv — pins torch) | LLM 고속 서빙/모델 최적화 |
 
 > **참고:** `nvidia-*` 런타임 라이브러리는 `torch` 의존성으로 자동 해소되므로 목록에 미포함. 고정하면 CUDA 버전 간 호환성이 깨질 수 있음.
 
@@ -234,7 +235,7 @@ GPU/MPS/CPU 패키지는 [1/7]에서 감지된 하드웨어에 따라 자동으�
 | 카테고리 | 패키지 | 설명 |
 |----------|--------|------|
 | **DataFrame** | `pandas`, `pyarrow`, `numpy`, `polars`, `duckdb`, `connectorx` | 데이터 분석/쿼리 엔진 |
-| **DB 드라이버** | `SQLAlchemy`, `alembic`, `psycopg2-binary`, `PyMySQL`, `oracledb`, `cx-Oracle`, `clickhouse-connect`, `clickhouse-driver` | PostgreSQL/MySQL/Oracle/ClickHouse |
+| **DB 드라이버** | `SQLAlchemy`, `alembic`, `psycopg2-binary`, `PyMySQL`, `oracledb`, `clickhouse-connect`, `clickhouse-driver` | PostgreSQL/MySQL/Oracle/ClickHouse |
 | **문서 처리** | `pdfplumber`, `pdfminer.six`, `pypdf`, `pypdfium2`, `python-docx`, `python-pptx`, `openpyxl`, `xlsxwriter`, `lxml` | PDF/Word/Excel/PPT 파싱 |
 | **이미지** | `pillow`, `opencv-python`, `opencv-python-headless`, `scikit-image`, `ImageIO` | 이미지 처리/CV |
 | **OCR** | `easyocr`, `pytesseract` | 광학 문자 인식 |
@@ -283,7 +284,7 @@ NVM (Node Version Manager)을 설치하고, Node.js LTS를 설치합니다.
 
 ### [6/7] Java (선택)
 
-SDKMAN을 설치하고, Java 21 (LTS)을 설치합니다.
+SDKMAN을 설치하고, Java 25 (LTS)을 설치합니다.
 
 - 프로필에 따라 기본 선택/미선택 결정
 - Lazy loading: `sdk`/`java` 최초 실행 시 로드
@@ -596,6 +597,7 @@ make preflight
 | gpu-enterprise | Linux | CUDA (Enterprise) | Full + DCGM/FM/GDS | No | No | core+data+web+gpu |
 | ngc-container | NGC/Linux | CUDA (NV symlink) | Skip (pre-installed) | No | No | core+data+web+nv-link |
 | gpu-workstation | Linux | CUDA | Full (consumer) | Yes | Yes | core+data+web+gpu |
+| gpu-server | Linux | CUDA | Full (consumer) + [Server Extras](#server-extras) | Yes | Yes | core+data+web+gpu |
 | cloud-server | Cloud/Container | CUDA (호스트 제공) | Skip (user-space only) | Yes | Yes | core+data+web+gpu |
 | mac-apple-silicon | macOS | MPS | Skip (N/A) | Yes | No | core+data+web+mps |
 | cpu-server | Linux | None | Skip (no GPU) | Yes | Yes | core+data+web+cpu |
@@ -619,7 +621,7 @@ cp config/machine.conf.example config/machine.conf
 |----------|-----|---------|---------------|
 | NGC container | NVIDIA | CUDA (NV custom build symlink) | torch 버전 체크 |
 | Cloud/Container | NVIDIA | CUDA (호스트 드라이버 사용) | Docker/K8s/VM 벤더 감지 + nvidia-smi |
-| Linux | NVIDIA | CUDA (cu131, cu130, cu126 등) | lspci + nvcc |
+| Linux | NVIDIA | CUDA (cu132, cu130, cu126 등) | lspci + nvcc |
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
 | Any | None | CPU fallback | 자동 |
 
@@ -650,7 +652,7 @@ cp config/machine.conf.example config/machine.conf
 
 # 버전 지정
 ./scripts/install-nvidia.sh --driver-version 570  # 드라이버 버전 지정
-./scripts/install-nvidia.sh --cuda-version 13-0   # CUDA 버전 지정
+./scripts/install-nvidia.sh --cuda-version 13-5   # CUDA 버전 지정
 ./scripts/install-nvidia.sh --open-kernel          # open 커널 모듈 강제
 ./scripts/install-nvidia.sh --proprietary          # proprietary 커널 모듈 강제
 ```
@@ -661,7 +663,7 @@ cp config/machine.conf.example config/machine.conf
 |------|--------|------|
 | `INSTALL_NVIDIA` | `true` | NVIDIA 스테이지 전체 활성화/비활성화 |
 | `NVIDIA_DRIVER_VERSION` | `""` (자동) | 드라이버 버전 (비어있으면 추천 버전 자동 선택) |
-| `NVIDIA_CUDA_VERSION` | `"13-0"` (CUDA 13.0) | CUDA 버전. 구형 GPU는 machine.conf에서 `"12-6"` 등 지정 |
+| `NVIDIA_CUDA_VERSION` | `""` (저장소 최신) | CUDA 버전. machine.conf에서 `"13-5"`, `"12-6"` 등 지정 (해당 배포판 저장소에 있는 버전만) |
 | `NVIDIA_OPEN_KERNEL` | `auto` | open/proprietary 커널 모듈 선택 |
 | `NVIDIA_ENTERPRISE` | `false` | 엔터프라이즈 도구 (DCGM, FM, GDS, peermem) |
 | `NVIDIA_NO_DRIVER` | `false` | 드라이버 설치 스킵 |
@@ -674,7 +676,7 @@ cp config/machine.conf.example config/machine.conf
 감지된 CUDA 버전에 따라 PyTorch index URL이 자동 선택됩니다 (`config/gpu-index-urls.conf`):
 
 ```
-cu131=https://download.pytorch.org/whl/cu131
+cu132=https://download.pytorch.org/whl/cu132
 cu130=https://download.pytorch.org/whl/cu130
 cu126=https://download.pytorch.org/whl/cu126
 cu124=https://download.pytorch.org/whl/cu124
@@ -778,6 +780,32 @@ sudo ./scripts/gpu-persist-fix.sh --revert
 
 ---
 
+## Server Extras
+
+상시 가동 서버용 추가 구성입니다. 기본 setup(7단계)과 별개이며, 여러 번 실행해도 안전합니다(sudo 필요).
+
+```bash
+./setup.sh --server                       # 서버 구성만 실행
+./setup.sh --profile gpu-server           # 기본 setup + 서버 구성을 한 번에
+./scripts/install-server.sh --check       # 상태만 확인 (변경 없음)
+./scripts/install-server.sh --only docker # 한 단계만: docker|updates|disk|monitoring|sleep|gpu-persist
+./scripts/install-server.sh --dry-run     # 실행 내용 미리 보기
+```
+
+| 단계 | 내용 | 설정 (`config/machine.conf`) |
+|------|------|------|
+| Docker | Docker Engine + Compose + NVIDIA Container Toolkit, 로그 로테이션, docker 그룹 | `SERVER_DOCKER` |
+| 업데이트 정책 | 자동 재부팅 금지. 커널·NVIDIA 패키지는 자동 업데이트에서 제외 (수동으로 함께 업데이트) | `SERVER_UPDATE_POLICY`, `SERVER_HOLD_KERNEL_NVIDIA` |
+| 디스크 | smartmontools + smartd 상시 감시 | `SERVER_DISK_HEALTH` |
+| 모니터링 | Prometheus + Grafana + node-exporter + DCGM exporter (`monitoring/`) | `SERVER_MONITORING`, `MONITORING_BIND` |
+| 절전 차단 | sleep/suspend/hibernate 타깃 마스킹 | `SERVER_DISABLE_SLEEP` |
+| GPU 안정화 | `gpu-persist-fix.sh` 실행 | `SERVER_GPU_PERSIST` |
+
+- **커널·드라이버 수동 업데이트**: `sudo apt update && sudo apt full-upgrade && sudo reboot`. 드라이버 유저스페이스만 먼저 올라가면 재부팅 전까지 CUDA가 "Driver/library version mismatch"로 깨지기 때문에 자동 업데이트에서 뺍니다. 나머지 보안 업데이트는 계속 자동 적용됩니다.
+- **모니터링 접속**: 기본은 `127.0.0.1`에만 바인딩됩니다. 원격에서는 `ssh -L 3000:localhost:3000 user@server` 후 `http://localhost:3000` (admin / `monitoring/.env`의 비밀번호).
+- **vLLM (선택)**: torch 버전을 정확히 고정하므로 메인 환경이 아닌 별도 venv(`~/vllm-env`)에 설치합니다. `./setup.sh --vllm`(포함) / `--no-vllm`(제외), 또는 `config/machine.conf`의 `INSTALL_VLLM=true`. 단독 설치는 `./scripts/install-vllm.sh`, 활성화는 `vllmenv`, 제거는 `./scripts/install-vllm.sh --uninstall`.
+- **새 기기에서 한 번에 돌릴 때**: 드라이버는 재부팅 후 로드되므로, 재부팅 뒤 `./setup.sh --server`를 한 번 더 실행해야 GPU 컨테이너 테스트와 GPU 지표가 켜집니다.
+
 ## Pre-flight Check
 
 `./setup.sh --plan` 또는 `make plan`으로 실제 설치 없이 현재 시스템 상태를 확인합니다.
@@ -801,8 +829,8 @@ sudo ./scripts/gpu-persist-fix.sh --revert
   * 4  AI Environment       not created                    → INSTALL
        Create ~/ai-env + install [core data web + GPU]
     5  Node.js              v22.12.0 (NVM)                 (ok)
-  * 6  Java 21              not installed                  → INSTALL
-       Install SDKMAN + Java 21
+  * 6  Java 25              not installed                  → INSTALL
+       Install SDKMAN + Java 25
     7  Shell Integration    configured (.bashrc .zshrc)    (ok)
 ```
 
@@ -961,7 +989,7 @@ make doctor
 | Python | uv로 관리되는 Python 존재 |
 | Virtual environment | venv 디렉토리, bin/python, bin/activate 존재 |
 | Key packages | **26개** 핵심 패키지 import 검증 (torch, transformers, anthropic, fastapi, pandas 등) |
-| GPU packages | **7개** GPU 전용 패키지 (vllm, deepspeed, bitsandbytes, pytorch_lightning 등) |
+| GPU packages | **7개** GPU 전용 패키지 (deepspeed, bitsandbytes, pytorch_lightning 등) |
 | GPU functional | **GPU 연산 테스트** — matmul, cuDNN conv2d, NCCL 가용성 |
 | Node.js | NVM + Node 설치 상태 (설치 선택 시) |
 | Java | SDKMAN + Java 설치 상태 (설치 선택 시) |
@@ -1187,7 +1215,7 @@ machine_setting/
 ├── setup.sh              # Single-entry bootstrap (7-stage pipeline)
 ├── Makefile              # make setup/update/push/status/doctor/uninstall
 ├── config/
-│   ├── default.conf          # Default settings (Python 3.12, Node LTS, Java 21)
+│   ├── default.conf          # Default settings (Python 3.12, Node LTS, Java 25)
 │   ├── machine.conf.example  # Machine-specific override template
 │   └── gpu-index-urls.conf   # PyTorch CUDA index URL mapping
 ├── packages/

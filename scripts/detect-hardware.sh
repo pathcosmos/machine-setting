@@ -65,6 +65,11 @@ esac
 if [ "$GPU_BACKEND" = "cuda" ]; then
     if command -v nvcc &>/dev/null; then
         CUDA_VERSION=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+    elif [ -x /usr/local/cuda/bin/nvcc ]; then
+        # Fresh install: toolkit present but /usr/local/cuda/bin not on PATH until shell integration
+        CUDA_VERSION=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
+    elif [ -f /usr/local/cuda/version.json ]; then
+        CUDA_VERSION=$(grep -A2 '"cuda"' /usr/local/cuda/version.json | sed -n 's/.*"version"[^0-9]*\([0-9]*\.[0-9]*\).*/\1/p' | head -1)
     elif [ -f /usr/local/cuda/version.txt ]; then
         CUDA_VERSION=$(sed -n 's/.*\([0-9]\{1,\}\.[0-9]\{1,\}\).*/\1/p' /usr/local/cuda/version.txt | head -1)
     elif command -v nvidia-smi &>/dev/null; then
@@ -129,7 +134,8 @@ if [ "$GPU_BACKEND" = "cuda" ]; then
     if python3 -c "import torch; assert 'nv' in torch.__version__ or '+cu' in torch.__version__" 2>/dev/null; then
         IS_NGC_CONTAINER=true
     # Also check common NGC markers
-    elif [ -f /etc/nvidia/entrypoint.d ] || [ -d /opt/nvidia ] || grep -q "NGC" /etc/os-release 2>/dev/null; then
+    # (/opt/nvidia alone is NOT a marker: the regular CUDA toolkit installs nsight there on bare metal)
+    elif [ -e /etc/nvidia/entrypoint.d ] || [ -n "${NVIDIA_PYTORCH_VERSION:-}" ] || grep -q "NGC" /etc/os-release 2>/dev/null; then
         IS_NGC_CONTAINER=true
     fi
 fi
@@ -143,8 +149,11 @@ HAS_SUDO=true
 if ! command -v sudo &>/dev/null; then
     HAS_SUDO=false
 elif ! sudo -n true 2>/dev/null; then
-    # sudo exists but requires password or is denied
-    HAS_SUDO=false
+    # No cached/passwordless sudo. A normal desktop user in an admin group can still sudo with a
+    # password — only treat it as "no sudo" when the user is not root and not in such a group.
+    if [ "$(id -u)" -ne 0 ] && ! id -nG 2>/dev/null | tr ' ' '\n' | grep -qxE 'sudo|wheel|admin'; then
+        HAS_SUDO=false
+    fi
 fi
 
 # Detect container environments

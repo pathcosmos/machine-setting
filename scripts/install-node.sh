@@ -11,7 +11,9 @@ export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # Install NVM if not present
 if [ ! -d "$NVM_DIR" ]; then
     echo "Installing NVM..."
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+    # PROFILE=/dev/null: keep the installer from appending eager nvm loading to ~/.bashrc;
+    # shell/bashrc.d/30-nvm.sh already lazy-loads nvm.
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.41.0/install.sh | PROFILE=/dev/null bash
     echo "  NVM installed"
 fi
 

@@ -39,7 +39,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --component <list>     Remove specific components (comma-separated)"
             echo "  --keep-config          Keep config & state, remove runtimes only"
             echo ""
-            echo "Components: nvidia, venv, python, node, java, shell, config"
+            echo "Components: nvidia, venv, python, node, java, shell, config, vllm, server"
             exit 0
             ;;
         *) echo "Unknown option: $1"; exit 1 ;;
@@ -71,7 +71,7 @@ get_dir_size() {
 }
 
 # Component info arrays
-declare -a COMP_NAMES=("nvidia" "venv" "python" "node" "java" "shell" "config")
+declare -a COMP_NAMES=("nvidia" "venv" "python" "node" "java" "shell" "config" "vllm" "server")
 declare -a COMP_LABELS=()
 declare -a COMP_FOUND=()     # true/false
 declare -a COMP_SELECTED=()  # true/false
@@ -160,6 +160,29 @@ detect_components() {
     COMP_FOUND+=("$has_config")
     COMP_SIZES+=("N/A")
     COMP_LABELS+=("Config & state files")
+
+    # 7) vllm (separate venv)
+    local vllm_path="${VLLM_VENV_PATH:-$HOME/vllm-env}"
+    if [ -f "$vllm_path/pyvenv.cfg" ]; then
+        COMP_FOUND+=(true)
+        COMP_SIZES+=("$(get_dir_size "$vllm_path")")
+        COMP_LABELS+=("vLLM virtual environment ($vllm_path, ${COMP_SIZES[-1]})")
+    else
+        COMP_FOUND+=(false)
+        COMP_SIZES+=("N/A")
+        COMP_LABELS+=("vLLM virtual environment (not installed)")
+    fi
+
+    # 8) server extras (monitoring stack, update policy, sleep mask, GPU persist; Docker itself is kept)
+    local has_server=false
+    [ -f /etc/apt/apt.conf.d/52machine-setting-unattended ] || [ -f "$REPO_DIR/monitoring/.env" ] && has_server=true
+    COMP_FOUND+=("$has_server")
+    COMP_SIZES+=("N/A")
+    if [ "$has_server" = true ]; then
+        COMP_LABELS+=("Server extras (monitoring, update policy, sleep mask, GPU persist — Docker kept)")
+    else
+        COMP_LABELS+=("Server extras (not configured)")
+    fi
 
     # Default selection: all found components
     for found in "${COMP_FOUND[@]}"; do
@@ -258,6 +281,8 @@ remove_component() {
         java)   remove_java ;;
         shell)  remove_shell ;;
         config) remove_config ;;
+        vllm)   bash "$SCRIPT_DIR/install-vllm.sh" --uninstall ;;
+        server) bash "$SCRIPT_DIR/install-server.sh" --uninstall ;;
     esac
 }
 

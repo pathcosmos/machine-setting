@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary
+.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary server server-check info vllm
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -84,3 +84,15 @@ cuda-defense-check: ## CUDA process-level health diagnostics (Ollama, VRAM, zomb
 
 cuda-defense-summary: ## CUDA defense quick status (one-line)
 	$(REPO_DIR)/scripts/cuda-defense-check.sh --summary
+
+server: ## Server extras: Docker, monitoring, SMART, update policy, no-sleep (sudo)
+	$(REPO_DIR)/scripts/install-server.sh
+
+server-check: ## Show server extras status (no changes)
+	$(REPO_DIR)/scripts/install-server.sh --check
+
+info: ## Print detailed machine spec report (Markdown) for sharing
+	@$(REPO_DIR)/scripts/system-info.sh
+
+vllm: ## Install vLLM inference server in its own venv (~/vllm-env)
+	$(REPO_DIR)/scripts/install-vllm.sh

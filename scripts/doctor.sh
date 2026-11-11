@@ -218,7 +218,7 @@ check_gpu_packages() {
     cat > "$tmp_script" << 'PYEOF'
 import warnings; warnings.filterwarnings("ignore")
 pkgs = [
-    ("vllm", "vllm"), ("deepspeed", "deepspeed"), ("bitsandbytes", "bitsandbytes"),
+    ("deepspeed", "deepspeed"), ("bitsandbytes", "bitsandbytes"),
     ("pytorch_lightning", "pytorch_lightning"), ("optimum", "optimum"),
     ("chromadb", "chromadb"), ("triton", "triton"),
 ]
@@ -767,9 +767,17 @@ check_disk_health() {
         return
     fi
 
+    local SMARTCTL="smartctl"
     if [ "$(id -u)" -ne 0 ]; then
-        status_skip "Disk SMART health (requires sudo)"
-        return
+        if sudo -n true 2>/dev/null; then
+            SMARTCTL="sudo -n smartctl"
+        elif systemctl is-active --quiet smartmontools 2>/dev/null; then
+            status_ok "Disk SMART health (smartd monitoring active; per-disk status needs sudo)"
+            return
+        else
+            status_skip "Disk SMART health (requires sudo)"
+            return
+        fi
     fi
 
     local fail_count=0 ok_count=0
@@ -778,7 +786,7 @@ check_disk_health() {
 
     for d in $disks; do
         local health
-        health=$(timeout 10 smartctl -H "/dev/$d" 2>/dev/null | grep -i "overall\|SMART Health" || true)
+        health=$(timeout 10 $SMARTCTL -H "/dev/$d" 2>/dev/null | grep -i "overall\|SMART Health" || true)
         if echo "$health" | grep -qi "PASSED\|OK"; then
             ((ok_count++))
         elif echo "$health" | grep -qi "FAILED"; then
@@ -792,6 +800,36 @@ check_disk_health() {
         status_ok "Disk SMART health ($ok_count disk(s) passed)"
     else
         status_skip "Disk SMART health (no results)"
+    fi
+}
+
+check_server_extras() {
+    if [ "$(uname -s)" != "Linux" ] || [ "${IS_CLOUD:-false}" = "true" ]; then return; fi
+    # Only reported once server extras were installed (Docker present) or requested via config
+    if ! command -v docker &>/dev/null && [ "${INSTALL_SERVER:-false}" != true ]; then return; fi
+    local out warn
+    out=$(bash "$SCRIPT_DIR/install-server.sh" --check 2>/dev/null || true)
+    warn=$(echo "$out" | grep -c '\[WARN\]' || true)
+    if [ "$warn" -eq 0 ]; then
+        status_ok "Server extras (Docker, update policy, smartd, monitoring, no-sleep)"
+    else
+        status_warn "Server extras ($warn item(s): $(echo "$out" | grep '\[WARN\]' | sed 's/.*\[WARN\] *//' | cut -d: -f1 | paste -sd, -) — Run: ./setup.sh --server)"
+    fi
+}
+
+check_vllm() {
+    local vpath="${VLLM_VENV_PATH:-$HOME/vllm-env}"
+    # Only reported when installed or requested via config
+    if [ ! -d "$vpath" ] && [ "${INSTALL_VLLM:-false}" != true ]; then return; fi
+    local out
+    if out=$(bash "$SCRIPT_DIR/install-vllm.sh" --check 2>/dev/null); then
+        if echo "$out" | grep -q "CUDA available: True"; then
+            status_ok "vLLM ($(echo "$out" | sed 's/^ *//; s/  |  CUDA.*//'))"
+        else
+            status_warn "vLLM installed but CUDA not available in its venv ($(echo "$out" | sed 's/^ *//'))"
+        fi
+    else
+        status_warn "vLLM not installed — Run: ./scripts/install-vllm.sh"
     fi
 }
 
@@ -855,7 +893,7 @@ recover_node() {
 
 recover_java() {
     echo "  Recovering Java..."
-    bash "$SCRIPT_DIR/install-java.sh" "${JAVA_VERSION:-21}"
+    bash "$SCRIPT_DIR/install-java.sh" "${JAVA_VERSION:-25}"
     echo "  Done."
 }
 
@@ -1011,7 +1049,9 @@ check_cuda_process
 check_cpu_throttling
 check_memory_pressure
 check_disk_health
+check_server_extras
 check_uv
+check_vllm
 check_python
 check_venv
 check_key_packages
