@@ -35,6 +35,18 @@ aienv() {
     disown
 }
 
+# vLLM lives in its own venv (it pins exact torch versions) — see scripts/install-vllm.sh
+vllmenv() {
+    local VENV_PATH="${1:-${VLLM_VENV_PATH:-$HOME/vllm-env}}"
+    if [ ! -d "$VENV_PATH" ]; then
+        echo "Error: No vLLM venv at $VENV_PATH"
+        echo "Run: $_MS_REPO_DIR/scripts/install-vllm.sh"
+        return 1
+    fi
+    source "$VENV_PATH/bin/activate"
+    echo "vLLM env activated: $VENV_PATH ($(python --version), vllm $(python -c 'import importlib.metadata as m; print(m.version("vllm"))' 2>/dev/null))"
+}
+
 # Deactivation helper
 aienv-off() {
     if [ -n "${VIRTUAL_ENV:-}" ]; then

@@ -2,11 +2,27 @@
 # Install SDKMAN + Java LTS
 set -euo pipefail
 
-JAVA_VERSION="${1:-21}"
+JAVA_VERSION="${1:-25}"
 
 echo "=== Java Setup ==="
 
 export SDKMAN_DIR="${SDKMAN_DIR:-$HOME/.sdkman}"
+
+# SDKMAN's installer aborts without zip/unzip/curl (not present on a fresh Ubuntu install)
+MISSING_TOOLS=""
+for tool in zip unzip curl; do
+    command -v "$tool" &>/dev/null || MISSING_TOOLS="$MISSING_TOOLS $tool"
+done
+if [ -n "$MISSING_TOOLS" ]; then
+    echo "Installing SDKMAN prerequisites:$MISSING_TOOLS"
+    if command -v apt-get &>/dev/null && command -v sudo &>/dev/null; then
+        # shellcheck disable=SC2086
+        sudo apt-get install -y $MISSING_TOOLS
+    else
+        echo "Error: missing$MISSING_TOOLS — install them and re-run"
+        exit 1
+    fi
+fi
 
 # Install SDKMAN if not present
 if [ ! -d "$SDKMAN_DIR" ]; then
@@ -29,7 +45,7 @@ fi
 # SDKMAN internals require relaxed variable checking
 set +u
 echo "Installing Java ${JAVA_VERSION} (Eclipse Temurin)..."
-JAVA_CANDIDATE=$(sdk list java 2>/dev/null | grep -oE "${JAVA_VERSION}\.[0-9.]+-tem" | head -1 || true)
+JAVA_CANDIDATE=$(sdk list java 2>/dev/null | grep -oE "${JAVA_VERSION}\.[0-9.+]+-tem" | head -1 || true)
 
 if [ -n "$JAVA_CANDIDATE" ]; then
     sdk install java "$JAVA_CANDIDATE" || true

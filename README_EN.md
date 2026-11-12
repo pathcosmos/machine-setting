@@ -19,6 +19,8 @@ Portable AI development environment system. One command to set up Python + AI/ML
 - [CLI Options](#cli-options)
 - [Profiles](#profiles)
 - [GPU Support](#gpu-support)
+- [Server Extras](#server-extras)
+- [Testing & Burn-in](#testing--burn-in)
 - [Pre-flight Check](#pre-flight-check)
 - [Reinstallation](#reinstallation)
 - [Uninstall](#uninstall)
@@ -119,6 +121,8 @@ Optimal profile is auto-selected based on detection results:
 - RAM >= 8GB -> `laptop`
 - Otherwise -> `minimal`
 
+- **Base tools**: `btop` is installed on every machine, GPU or not (right after hardware detection, sudo). List: `BASE_TOOLS`; disable with `INSTALL_BASE_TOOLS=false`. Standalone: `make base-tools`.
+
 ### [2/7] NVIDIA GPU Stack (Linux only)
 
 Automatically installs the system-level NVIDIA GPU software stack. `scripts/install-nvidia.sh` runs 9 sub-stages.
@@ -143,7 +147,7 @@ Automatically installs the system-level NVIDIA GPU software stack. `scripts/inst
 | NCCL | Multi-GPU collective communication (skipped for single GPU) | Auto |
 | Container Toolkit | Docker GPU support (skipped if Docker not installed) | `NVIDIA_CONTAINER_TOOLKIT` |
 | Enterprise Tools | DCGM, Fabric Manager, GDS, nvidia-peermem | `NVIDIA_ENTERPRISE` |
-| System Utilities | numactl, hwloc, nvtop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
+| System Utilities | numactl, hwloc, nvtop, btop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
 | Kernel Tuning | sysctl (vm.max_map_count, shmmax, etc.), memlock limits, CPU governor | `NVIDIA_KERNEL_TUNING` |
 
 **Open vs Proprietary Kernel Modules:**
@@ -185,7 +189,7 @@ Creates venv and installs packages by group.
 | core | `requirements-core.txt` | transformers, accelerate, peft, wandb, numpy, mlflow, tensorboard, optuna, etc. |
 | data | `requirements-data.txt` | pandas, polars, duckdb, SQLAlchemy, psycopg2, pypdf, openpyxl, etc. |
 | web | `requirements-web.txt` | fastapi, uvicorn, httpx, gradio, cryptography, etc. |
-| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes, deepspeed, vllm, pynvml, nvitop, etc. |
+| gpu | `requirements-gpu.txt` | torch+CUDA, triton, bitsandbytes, deepspeed, nvidia-ml-py, nvitop, etc. |
 | mps | `requirements-mps.txt` | torch (with Apple Silicon MPS) |
 | cpu | `requirements-cpu.txt` | torch CPU-only build |
 
@@ -197,7 +201,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 
 | Category | Packages | Description |
 |----------|----------|-------------|
-| **LLM Providers** | `anthropic`, `openai`, `google-generativeai` + 7 Google API packages | Claude, GPT, Gemini APIs |
+| **LLM Providers** | `anthropic`, `openai`, `google-genai` + 6 Google API packages | Claude, GPT, Gemini APIs |
 | **LangChain** | `langchain`, `langchain-community`, `langchain-core`, `langchain-huggingface`, `langgraph`, `langgraph-checkpoint`, `langgraph-prebuilt`, `langgraph-sdk`, `langsmith` | Agents/chains/graphs |
 | **HuggingFace** | `transformers`, `datasets`, `tokenizers`, `huggingface_hub`, `accelerate`, `peft`, `trl`, `sentence-transformers`, `safetensors`, `hf-xet`, `sentencepiece` | Model training/inference/fine-tuning |
 | **Classical ML** | `scikit-learn`, `scipy`, `xgboost`, `lightgbm`, `numba`, `llvmlite` | Traditional machine learning |
@@ -224,8 +228,8 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | **CUDA Bindings** | `cuda-bindings`, `cuda-pathfinder` | CUDA Python bindings |
 | **GPU Acceleration** | `flash-attn`, `bitsandbytes`, `onnxruntime-gpu` | FlashAttention/quantization/GPU inference |
 | **Distributed Training** | `deepspeed`, `pytorch-lightning`, `torchmetrics` | Multi-GPU training |
-| **GPU Monitoring** | `pynvml`, `gpustat`, `nvitop` | GPU usage/temperature monitoring |
-| **Inference Optimization** | `vllm`, `optimum` | High-speed LLM serving/model optimization |
+| **GPU Monitoring** | `nvidia-ml-py`, `gpustat`, `nvitop` | GPU usage/temperature monitoring |
+| **Inference Optimization** | `optimum` (`vllm`: optional, separate venv — pins torch) | High-speed LLM serving/model optimization |
 
 > **Note:** `nvidia-*` runtime libraries are auto-resolved as `torch` dependencies and not pinned here. Pinning them breaks cross-CUDA-version compatibility.
 
@@ -234,7 +238,7 @@ GPU/MPS/CPU packages are auto-selected based on hardware detected in [1/7].
 | Category | Packages | Description |
 |----------|----------|-------------|
 | **DataFrames** | `pandas`, `pyarrow`, `numpy`, `polars`, `duckdb`, `connectorx` | Data analysis/query engines |
-| **DB Drivers** | `SQLAlchemy`, `alembic`, `psycopg2-binary`, `PyMySQL`, `oracledb`, `cx-Oracle`, `clickhouse-connect`, `clickhouse-driver` | PostgreSQL/MySQL/Oracle/ClickHouse |
+| **DB Drivers** | `SQLAlchemy`, `alembic`, `psycopg2-binary`, `PyMySQL`, `oracledb`, `clickhouse-connect`, `clickhouse-driver` | PostgreSQL/MySQL/Oracle/ClickHouse |
 | **Document Processing** | `pdfplumber`, `pdfminer.six`, `pypdf`, `pypdfium2`, `python-docx`, `python-pptx`, `openpyxl`, `xlsxwriter`, `lxml` | PDF/Word/Excel/PPT parsing |
 | **Image** | `pillow`, `opencv-python`, `opencv-python-headless`, `scikit-image`, `ImageIO` | Image processing/CV |
 | **OCR** | `easyocr`, `pytesseract` | Optical character recognition |
@@ -283,7 +287,7 @@ Installs NVM (Node Version Manager) and Node.js LTS.
 
 ### [6/7] Java (optional)
 
-Installs SDKMAN and Java 21 (LTS).
+Installs SDKMAN and Java 25 (LTS).
 
 - Default selection based on profile
 - Lazy loading: Loads on first `sdk`/`java` invocation
@@ -364,7 +368,7 @@ Summary of items added to the system after installation:
 | `nvidia-container-toolkit` | Docker GPU support | `uninstall --component nvidia` |
 | `/etc/sysctl.d/99-machine-setting-gpu.conf` | GPU kernel parameters | `uninstall --component nvidia` |
 | `/etc/security/limits.d/99-machine-setting-gpu.conf` | memlock/nproc limits | `uninstall --component nvidia` |
-| numactl, hwloc, nvtop, lm-sensors | System utilities | Manual removal |
+| numactl, hwloc, nvtop, btop, lm-sensors | System utilities | Manual removal |
 
 ### Shell RC Modifications
 
@@ -596,6 +600,7 @@ make preflight
 | gpu-enterprise | Linux | CUDA (Enterprise) | Full + DCGM/FM/GDS | No | No | core+data+web+gpu |
 | ngc-container | NGC/Linux | CUDA (NV symlink) | Skip (pre-installed) | No | No | core+data+web+nv-link |
 | gpu-workstation | Linux | CUDA | Full (consumer) | Yes | Yes | core+data+web+gpu |
+| gpu-server | Linux | CUDA | Full (consumer) + [Server Extras](#server-extras) | Yes | Yes | core+data+web+gpu |
 | cloud-server | Cloud/Container | CUDA (host-provided) | Skip (user-space only) | Yes | Yes | core+data+web+gpu |
 | mac-apple-silicon | macOS | MPS | Skip (N/A) | Yes | No | core+data+web+mps |
 | cpu-server | Linux | None | Skip (no GPU) | Yes | Yes | core+data+web+cpu |
@@ -619,7 +624,7 @@ cp config/machine.conf.example config/machine.conf
 |----------|-----|---------|----------------|
 | NGC container | NVIDIA | CUDA (NV custom build symlink) | torch version check |
 | Cloud/Container | NVIDIA | CUDA (host driver) | Docker/K8s/VM vendor detection + nvidia-smi |
-| Linux | NVIDIA | CUDA (cu131, cu130, cu126, etc.) | lspci + nvcc |
+| Linux | NVIDIA | CUDA (cu132, cu130, cu126, etc.) | lspci + nvcc |
 | macOS arm64 | Apple Silicon | MPS (Metal) | uname -m |
 | Any | None | CPU fallback | Auto |
 
@@ -650,7 +655,7 @@ Stage [2/7] automatically installs the following system-level NVIDIA software:
 
 # Version pinning
 ./scripts/install-nvidia.sh --driver-version 570  # Specific driver version
-./scripts/install-nvidia.sh --cuda-version 13-0   # Specific CUDA version
+./scripts/install-nvidia.sh --cuda-version 13-5   # Specific CUDA version
 ./scripts/install-nvidia.sh --open-kernel          # Force open kernel modules
 ./scripts/install-nvidia.sh --proprietary          # Force proprietary kernel modules
 ```
@@ -661,7 +666,7 @@ Stage [2/7] automatically installs the following system-level NVIDIA software:
 |---------|---------|-------------|
 | `INSTALL_NVIDIA` | `true` | Enable/disable entire NVIDIA stage |
 | `NVIDIA_DRIVER_VERSION` | `""` (auto) | Driver version (empty = auto-recommend) |
-| `NVIDIA_CUDA_VERSION` | `"13-0"` (CUDA 13.0) | CUDA version. Use e.g. `"12-6"` in machine.conf for older GPUs |
+| `NVIDIA_CUDA_VERSION` | `""` (latest in repo) | CUDA version. Pin e.g. `"13-5"` or `"12-6"` in machine.conf (must exist in that distro's repo) |
 | `NVIDIA_OPEN_KERNEL` | `auto` | Open/proprietary kernel module selection |
 | `NVIDIA_ENTERPRISE` | `false` | Enterprise tools (DCGM, FM, GDS, peermem) |
 | `NVIDIA_NO_DRIVER` | `false` | Skip driver installation |
@@ -674,7 +679,7 @@ Stage [2/7] automatically installs the following system-level NVIDIA software:
 PyTorch index URL is auto-selected based on detected CUDA version (`config/gpu-index-urls.conf`):
 
 ```
-cu131=https://download.pytorch.org/whl/cu131
+cu132=https://download.pytorch.org/whl/cu132
 cu130=https://download.pytorch.org/whl/cu130
 cu126=https://download.pytorch.org/whl/cu126
 cu124=https://download.pytorch.org/whl/cu124
@@ -770,6 +775,79 @@ sudo ./scripts/gpu-persist-fix.sh --revert
 
 ---
 
+## Server Extras
+
+Extras for an always-on server. Separate from the 7-stage base setup and safe to re-run (needs sudo).
+
+```bash
+./setup.sh --server                       # server extras only
+./setup.sh --profile gpu-server           # base setup + server extras in one go
+./scripts/install-server.sh --check       # status only (no changes)
+./scripts/install-server.sh --only docker # one step: docker|updates|disk|monitoring|sleep|gpu-persist
+./scripts/install-server.sh --dry-run     # preview
+```
+
+| Step | What | Config (`config/machine.conf`) |
+|------|------|------|
+| Docker | Docker Engine + Compose + NVIDIA Container Toolkit, log rotation, docker group | `SERVER_DOCKER` |
+| Update policy | Never auto-reboot. Kernel and NVIDIA packages excluded from automatic upgrades (update manually, together) | `SERVER_UPDATE_POLICY`, `SERVER_HOLD_KERNEL_NVIDIA` |
+| Disks | smartmontools + smartd | `SERVER_DISK_HEALTH` |
+| Monitoring | Prometheus + Grafana + node-exporter + DCGM exporter (`monitoring/`) | `SERVER_MONITORING`, `MONITORING_BIND` |
+| No sleep | sleep/suspend/hibernate targets masked | `SERVER_DISABLE_SLEEP` |
+| GPU stability | runs `gpu-persist-fix.sh` | `SERVER_GPU_PERSIST` |
+
+- **Manual kernel/driver update**: `sudo apt update && sudo apt full-upgrade && sudo reboot`. Upgrading the NVIDIA userspace under a loaded module breaks CUDA ("Driver/library version mismatch") until reboot, so those packages are held back. All other security updates still apply automatically.
+- **Reaching the dashboards**: ports bind to `127.0.0.1` by default. Remotely: `ssh -L 3000:localhost:3000 user@server`, then `http://localhost:3000` (admin / password in `monitoring/.env`).
+- **vLLM (optional)**: pins exact torch versions, so it is installed in its own venv (`~/vllm-env`), not the main env. `./setup.sh --vllm` (include) / `--no-vllm` (exclude), or `INSTALL_VLLM=true` in `config/machine.conf`. Standalone: `./scripts/install-vllm.sh`; activate with `vllmenv`; remove with `./scripts/install-vllm.sh --uninstall`.
+- **Fresh machine in one pass**: the driver loads after a reboot, so run `./setup.sh --server` once more afterwards to enable the GPU container test and GPU metrics.
+
+## Testing & Burn-in
+
+Unlike `doctor` (is it installed?), these actually run each feature. No sudo needed.
+
+### Functional test (`make test`)
+
+```bash
+make test                                  # 1-2 min: GPU compute, cuDNN, AMP training, ONNX Runtime, Docker + GPU container,
+                                           #          monitoring metrics, Node/Java/uv execution, vLLM import
+make test-full                             # + serve a tiny model with vLLM and get a completion (~300MB download)
+./scripts/smoke-test.sh --only gpu         # one group: health|gpu|docker|monitoring|runtimes|vllm
+```
+
+Components that are not installed are reported as SKIP; any failure gives exit code 1.
+
+### Long GPU burn-in (`make burnin`)
+
+Before a GPU server goes into service, run mixed workloads for 6 hours to check stability and performance.
+
+```bash
+make burnin                                # 6 hours in the background (survives logout)
+make burnin-status                         # progress
+make burnin-report                         # print the last report
+./scripts/gpu-burnin.sh --quick            # 10-minute check
+./scripts/gpu-burnin.sh --hours 12         # custom duration
+./scripts/gpu-burnin.sh --stop             # stop (a partial report is written)
+./scripts/gpu-burnin.sh --save-baseline    # on PASS, store the averages as the reference for this GPU model
+```
+
+| Workload in every round | What it checks |
+|------|------|
+| Matrix multiply FP32 / FP16 | Peak compute and power, TFLOPS |
+| ResNet-50 training and inference (AMP) | cuDNN convolutions, img/s |
+| Transformer training (12 layers / 768 wide, AMP) | Attention, tokens/s |
+| VRAM integrity | Writes a pattern to 90% of free VRAM, computes, reads it back |
+| Host <-> GPU transfer | PCIe copy speed |
+| DataLoader + training | CPU workers, RAM and GPU together |
+| Determinism | The same computation must give bit-identical results every round |
+| Idle | Thermal cycling between load and idle |
+
+- **Sized for the GPU model**: batch and matrix sizes follow the card's VRAM (e.g. ResNet-50 training batch 24GB -> 64, 32GB -> 128, 80GB -> 256); a batch is halved automatically on out-of-memory. The chosen sizes are recorded in the report.
+- **Continuous logging**: temperature, power, clocks, throttle reasons, fan and PCIe link state every 2 s in `samples.csv`. The run aborts 5 C below the shutdown threshold.
+- **Verdict**: FAIL — kernel Xid / GPU lost, corrupted VRAM values, non-identical results, workload error, temperature abort, throughput drop over 20%. WARN — thermal/hardware throttling, drop over 5%, unstable throughput, PCIe link change, below 85% of the reference.
+- **Per-model reference**: `config/gpu-baselines.json` stores average throughput per GPU model name. Models with a reference get a "vs reference" column; others are judged on stability and drift only.
+- **Results**: `~/.machine_setting/burnin/<timestamp>/gpu<N>/` (`REPORT.md`, `summary.json`, `samples.csv`, `run.log`). Multiple GPUs run in parallel, one report each.
+- Refuses to start while other processes use the GPU (`--force` overrides).
+
 ## Pre-flight Check
 
 Run `./setup.sh --plan` or `make plan` to check system state without installing.
@@ -793,8 +871,8 @@ Run `./setup.sh --plan` or `make plan` to check system state without installing.
   * 4  AI Environment       not created                    -> INSTALL
        Create ~/ai-env + install [core data web + GPU]
     5  Node.js              v22.12.0 (NVM)                 (ok)
-  * 6  Java 21              not installed                  -> INSTALL
-       Install SDKMAN + Java 21
+  * 6  Java 25              not installed                  -> INSTALL
+       Install SDKMAN + Java 25
     7  Shell Integration    configured (.bashrc .zshrc)    (ok)
 ```
 
@@ -953,7 +1031,7 @@ Checks the following items:
 | Python | uv-managed Python exists |
 | Virtual environment | venv directory, bin/python, bin/activate exist |
 | Key packages | **26** core packages import test (torch, transformers, anthropic, fastapi, pandas, etc.) |
-| GPU packages | **7** GPU-specific packages (vllm, deepspeed, bitsandbytes, pytorch_lightning, etc.) |
+| GPU packages | **7** GPU-specific packages (deepspeed, bitsandbytes, pytorch_lightning, etc.) |
 | GPU functional | **GPU compute test** — matmul, cuDNN conv2d, NCCL availability |
 | Node.js | NVM + Node installation status (if selected) |
 | Java | SDKMAN + Java installation status (if selected) |
@@ -1179,7 +1257,7 @@ machine_setting/
 ├── setup.sh              # Single-entry bootstrap (7-stage pipeline)
 ├── Makefile              # make setup/update/push/status/doctor/uninstall
 ├── config/
-│   ├── default.conf          # Default settings (Python 3.12, Node LTS, Java 21)
+│   ├── default.conf          # Default settings (Python 3.12, Node LTS, Java 25)
 │   ├── machine.conf.example  # Machine-specific override template
 │   └── gpu-index-urls.conf   # PyTorch CUDA index URL mapping
 ├── packages/

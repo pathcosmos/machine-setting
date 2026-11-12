@@ -436,7 +436,7 @@ check_java() {
     local sdk_dir="${SDKMAN_DIR:-$HOME/.sdkman}"
 
     if [ "$want_java" = false ]; then
-        COMP_NAMES+=("Java ${JAVA_VERSION:-21}")
+        COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
         COMP_KEYS+=("JAVA")
         COMP_STATUS+=("not in profile")
         COMP_ACTIONS+=("skip")
@@ -452,26 +452,26 @@ check_java() {
         if command -v java &>/dev/null; then
             local java_ver
             java_ver=$(java -version 2>&1 | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "unknown")
-            COMP_NAMES+=("Java ${JAVA_VERSION:-21}")
+            COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
             COMP_KEYS+=("JAVA")
             COMP_STATUS+=("$java_ver (SDKMAN)")
             COMP_ACTIONS+=("skip")
             COMP_DETAILS+=("Already installed")
             COMP_SELECTED+=(0)
         else
-            COMP_NAMES+=("Java ${JAVA_VERSION:-21}")
+            COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
             COMP_KEYS+=("JAVA")
             COMP_STATUS+=("SDKMAN present, no Java active")
             COMP_ACTIONS+=("run")
-            COMP_DETAILS+=("Install Java ${JAVA_VERSION:-21} via SDKMAN")
+            COMP_DETAILS+=("Install Java ${JAVA_VERSION:-25} via SDKMAN")
             COMP_SELECTED+=(1)
         fi
     else
-        COMP_NAMES+=("Java ${JAVA_VERSION:-21}")
+        COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
         COMP_KEYS+=("JAVA")
         COMP_STATUS+=("not installed")
         COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Install SDKMAN + Java ${JAVA_VERSION:-21}")
+        COMP_DETAILS+=("Install SDKMAN + Java ${JAVA_VERSION:-25}")
         COMP_SELECTED+=(1)
     fi
 }

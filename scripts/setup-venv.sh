@@ -54,6 +54,19 @@ echo "  Path: $VENV_PATH"
 echo "  Python: $PYTHON_VERSION"
 echo "  Hardware: GPU=$HAS_GPU Backend=${GPU_BACKEND:-none} Suffix=$CUDA_SUFFIX"
 
+# Pick the PyTorch build once, for all install steps. Core packages (sentence-transformers,
+# accelerate, ...) pull torch in before the GPU step, so without this the default PyPI build wins
+# and the CUDA-specific index is never consulted. uv only routes torch-family packages this way.
+if [ -z "${UV_TORCH_BACKEND:-}" ]; then
+    if [ "${GPU_BACKEND:-none}" = "cuda" ] && [[ "$CUDA_SUFFIX" == cu* ]] \
+        && grep -q "^${CUDA_SUFFIX}=" "$REPO_DIR/config/gpu-index-urls.conf"; then
+        export UV_TORCH_BACKEND="$CUDA_SUFFIX"
+    elif [ "${GPU_BACKEND:-none}" = "none" ] && [ "$(uname -s)" = "Linux" ]; then
+        export UV_TORCH_BACKEND="cpu"
+    fi
+fi
+[ -n "${UV_TORCH_BACKEND:-}" ] && echo "  PyTorch build: $UV_TORCH_BACKEND"
+
 # --- Create venv ---
 if [ -d "$VENV_PATH" ]; then
     echo ""
@@ -155,14 +168,14 @@ elif [ "$GPU_BACKEND" = "cuda" ] && [ -f "$PKG_DIR/requirements-gpu.txt" ]; then
         fi
     done < "$REPO_DIR/config/gpu-index-urls.conf"
 
-    if [ -n "$INDEX_URL" ]; then
-        echo "  Installing GPU packages (CUDA $CUDA_VERSION, index: $INDEX_URL)..."
-        $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-gpu.txt" \
-            --index-url "$INDEX_URL" \
-            --extra-index-url "https://pypi.org/simple" 2>&1 | tail -1
+    if [ -n "$INDEX_URL" ] && [[ "$CUDA_SUFFIX" == cu* ]]; then
+        echo "  Installing GPU packages (CUDA $CUDA_VERSION, PyTorch build: $CUDA_SUFFIX)..."
+        # torch-family packages come from the PyTorch index via UV_TORCH_BACKEND (set above);
+        # everything else from PyPI. (--index-url + --extra-index-url let PyPI win for torch.)
+        $UV_PIP install $INSTALL_ARGS -r "$PKG_DIR/requirements-gpu.txt" 2>&1 | tail -1
         [ "$HAS_CHECKPOINT" = true ] && checkpoint_add_group_done "gpu"
     else
-        echo "  Warning: No index URL found for $CUDA_SUFFIX, skipping GPU packages"
+        echo "  Warning: No PyTorch CUDA build known for '$CUDA_SUFFIX' (CUDA toolkit not detected?), skipping GPU packages"
     fi
 
 elif [ "$GPU_BACKEND" = "mps" ] && [ -f "$PKG_DIR/requirements-mps.txt" ]; then

@@ -1,0 +1,65 @@
+# Monitoring stack for a single AI server. Started by scripts/install-server.sh:
+#   docker compose -p machine-monitoring --env-file monitoring/.env -f monitoring/docker-compose.yml [--profile gpu] up -d
+#
+# All ports bind to MONITORING_BIND (default 127.0.0.1). Reach Grafana remotely with an SSH tunnel:
+#   ssh -L 3000:localhost:3000 user@server
+# Set MONITORING_BIND=0.0.0.0 in monitoring/.env only on a trusted network / behind a firewall.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${MONITORING_BIND:-127.0.0.1}:9090:9090"
+
+  grafana:
+    image: grafana/grafana:13.3.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in monitoring/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "${MONITORING_BIND:-127.0.0.1}:3000:3000"
+    depends_on:
+      - prometheus
+
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    restart: unless-stopped
+    pid: host
+    command:
+      - --path.rootfs=/host
+    volumes:
+      - /:/host:ro,rslave
+
+  # GPU metrics (utilization, memory, temperature, power). Enabled with --profile gpu.
+  dcgm-exporter:
+    image: nvcr.io/nvidia/k8s/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+    profiles: ["gpu"]
+    restart: unless-stopped
+    cap_add:
+      - SYS_ADMIN
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  prometheus-data:
+  grafana-data:

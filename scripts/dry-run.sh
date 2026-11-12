@@ -249,7 +249,9 @@ diag_nvidia() {
         tag_info "Running detailed NVIDIA diagnostic..."
         echo ""
         # Run NVIDIA dry-run (it has its own comprehensive diagnostic)
-        bash "$SCRIPT_DIR/install-nvidia.sh" --dry-run 2>&1 | sed 's/^/    /'
+        # Pass detected hardware: on a fresh machine ~/.machine_setting_profile does not exist yet
+        HAS_GPU="$HAS_GPU" GPU_BACKEND="$GPU_BACKEND" GPU_NAME="$GPU_NAME" GPU_COUNT="$GPU_COUNT" \
+            bash "$SCRIPT_DIR/install-nvidia.sh" --dry-run 2>&1 | sed 's/^/    /'
         echo ""
         tag_info "End of NVIDIA diagnostic"
     else
@@ -610,7 +612,7 @@ diag_java() {
     fi
 
     local sdk_dir="${SDKMAN_DIR:-$HOME/.sdkman}"
-    local target_ver="${JAVA_VERSION:-21}"
+    local target_ver="${JAVA_VERSION:-25}"
 
     subsection "SDKMAN"
     if [ -d "$sdk_dir" ] && [ -s "$sdk_dir/bin/sdkman-init.sh" ]; then

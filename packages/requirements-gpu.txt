@@ -26,10 +26,11 @@ pytorch-lightning
 torchmetrics
 
 # GPU monitoring (Python)
-pynvml
+nvidia-ml-py  # official NVML bindings (pynvml package is deprecated)
 gpustat
 nvitop
 
 # Inference optimization
-vllm
+# vllm is NOT installed here: it pins exact torch/torchvision/numba versions (0.33.0 -> torch==2.14.0)
+# and would downgrade this env. It gets its own venv: ./scripts/install-vllm.sh (INSTALL_VLLM=true / --vllm)
 optimum

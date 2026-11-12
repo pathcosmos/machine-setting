@@ -11,7 +11,8 @@
 # JAVA_VERSION="17"
 
 # NVIDIA GPU stack: align to system CUDA (e.g. 13.0 for RTX 50 / Blackwell)
-# NVIDIA_CUDA_VERSION="13-0"   # default in default.conf
+# INSTALL_VLLM=true            # vLLM in its own venv (~/vllm-env)
+# NVIDIA_CUDA_VERSION="13-5"   # default: empty = latest in repo
 # NVIDIA_CUDA_VERSION="12-6"   # for older drivers / cu126 systems
 
 # Additional pip install arguments

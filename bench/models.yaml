@@ -1,0 +1,162 @@
+# vLLM benchmark candidates for a single RTX 5090 (32 GB, Blackwell).
+# Verified against Hugging Face on 2026-11-10 (existence, weight size, licence).
+# Selection rule: anything whose weights leave room for KV cache (<= ~26 GB) is eligible;
+# the list deliberately spans quantization formats (NVFP4, AWQ, FP8, MXFP4, BF16).
+# Order = run priority (results are resumable, so the run can be stopped at any point).
+#
+# Fields
+#   repo        HF model id passed to `vllm serve`
+#   precision   informational; shown in the summary
+#   serve_args  extra `vllm serve` flags
+#   modes       quality-eval modes; `body` is merged into each chat request, `system` is an optional system prompt
+#
+# No entry uses --trust-remote-code (some model cards suggest it; vLLM 0.33 has native support
+# and built-in reasoning parsers for all of these). A model that cannot start without it is
+# recorded as a failure rather than run with remote code.
+#
+# Qwen3.5/3.6/3.8 entries use --max-num-seqs 32 and --kv-cache-dtype fp8. These hybrid
+# (linear-attention) models keep a large per-sequence state; with vLLM's default sequence limit the
+# startup profiler allocates ~12.5 GiB for it and Qwen3.8-27B fails to start next to ~20 GiB of
+# 4-bit weights. 32 matches the highest benchmark concurrency. fp8 KV follows the model cards.
+#
+# Considered and left out:
+#   Qwen/Qwen3.8-27B-FP8 (30.9 GB), nvidia/Gemma-4-31B-IT-NVFP4 (32.6 GB), RedHatAI/gemma-4-31B-it-FP8-block
+#   (33.3 GB), Muse-Glimmer FP8 (34.4 GB), EXAONE-4.5-33B-FP8 (41.3 GB)      -> do not fit with KV cache
+#   nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB (2-bit QAT, 24.1 GB)        -> needs a pinned vLLM nightly, a
+#       downloaded reasoning-parser plugin and VLLM_USE_V2_MODEL_RUNNER; not runnable on the stock 0.33 venv
+#   kakaocorp/kanana-2-30b-a3b-thinking-2601, naver HyperCLOVAX-SEED-Think-14B -> only single-digit-download
+#       third-party quants exist; unquantized weights are ~60 GB
+#   Magistral-Small-2509 / Devstral-Small-2 AWQ (32.1 GB repos), Kimi-Linear-48B AWQ (30.5 GB) -> too large
+
+defaults:
+  max_model_len: 16384
+  gpu_memory_utilization: 0.93
+
+x-qwen-modes: &qwen_modes
+  - name: think
+    body: {temperature: 1.0, top_p: 0.95, chat_template_kwargs: {enable_thinking: true}}
+  - name: nothink
+    body: {temperature: 0.7, top_p: 0.8, chat_template_kwargs: {enable_thinking: false}}
+
+x-gemma-modes: &gemma_modes
+  - name: think
+    body: {temperature: 1.0, top_p: 0.95, chat_template_kwargs: {enable_thinking: true}}
+  - name: nothink
+    body: {temperature: 1.0, top_p: 0.95, chat_template_kwargs: {enable_thinking: false}}
+
+models:
+  # ---- Qwen3.8-27B: same model, three packagings (format comparison) ----
+  - alias: qwen38-27b-nvfp4
+    repo: nvidia/Qwen3.8-27B-NVFP4             # 21.9 GB, apache-2.0, official NVIDIA mixed NVFP4/FP8
+    precision: NVFP4+FP8
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+    modes: *qwen_modes
+
+  - alias: qwen38-27b-awq
+    repo: cyankiwi/Qwen3.8-27B-AWQ-INT4        # 21.0 GB, apache-2.0, third-party
+    precision: AWQ INT4
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+    modes: *qwen_modes
+
+  # ---- other ~30B-class models ----
+  - alias: qwen36-35b-a3b-nvfp4
+    repo: nvidia/Qwen3.6-35B-A3B-NVFP4         # 23.4 GB, apache-2.0, MoE (3B active)
+    precision: NVFP4
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+    modes: *qwen_modes
+
+  - alias: gemma4-31b-awq
+    repo: QuantTrio/gemma-4-31B-it-AWQ         # 20.5 GB, apache-2.0
+    precision: AWQ INT4
+    serve_args: [--reasoning-parser, gemma4]
+    modes: *gemma_modes
+
+  - alias: muse-glimmer-30b-nvfp4
+    repo: nvidia/Muse-Glimmer-30B-NVFP4        # 24.7 GB, apache-2.0 (Meta Muse-Glimmer-30B)
+    precision: NVFP4
+    serve_args: [--reasoning-parser, muse_glimmer]
+    modes:
+      - name: effort-high
+        system: "Reasoning strength: high"
+        body: {temperature: 1.0}
+      - name: effort-low
+        system: "Reasoning strength: low"
+        body: {temperature: 1.0}
+
+  - alias: exaone45-33b-awq
+    repo: LGAI-EXAONE/EXAONE-4.5-33B-AWQ       # 22.8 GB, official quant; EXAONE licence (check before commercial use)
+    precision: AWQ INT4
+    serve_args: [--reasoning-parser, qwen3]
+    modes:
+      - name: think
+        body: {temperature: 0.6, top_p: 0.95, chat_template_kwargs: {enable_thinking: true}}
+      - name: nothink
+        body: {temperature: 0.6, top_p: 0.95, chat_template_kwargs: {enable_thinking: false}}
+
+  - alias: gpt-oss-20b
+    repo: openai/gpt-oss-20b                   # native MXFP4, apache-2.0; reasoning cannot be turned off
+    precision: MXFP4 (native)
+    serve_args: []
+    modes:
+      - name: effort-high
+        body: {temperature: 1.0, reasoning_effort: high}
+      - name: effort-low
+        body: {temperature: 1.0, reasoning_effort: low}
+
+  - alias: gemma4-26b-a4b-awq
+    repo: cyankiwi/gemma-4-26B-A4B-it-AWQ-4bit # 17.2 GB, apache-2.0, MoE (4B active)
+    precision: AWQ INT4
+    serve_args: [--reasoning-parser, gemma4]
+    modes: *gemma_modes
+
+  - alias: nanbeige43-33b-int4
+    repo: Nanbeige/Nanbeige4.3-33B-INT4        # 22.6 GB, apache-2.0, official quant
+    precision: INT4
+    serve_args: [--reasoning-parser, qwen3]
+    modes:
+      - name: think
+        body: {temperature: 0.6, top_p: 0.95, chat_template_kwargs: {enable_thinking: true}}
+      - name: nothink
+        body: {temperature: 0.6, top_p: 0.95, chat_template_kwargs: {enable_thinking: false}}
+
+  - alias: glm47-flash-awq
+    repo: QuantTrio/GLM-4.7-Flash-AWQ          # 19.8 GB, MIT, MoE
+    precision: AWQ INT4
+    serve_args: [--reasoning-parser, glm47]
+    modes:
+      - name: think
+        body: {temperature: 1.0, top_p: 0.95, chat_template_kwargs: {enable_thinking: true}}
+      - name: nothink
+        body: {temperature: 0.7, chat_template_kwargs: {enable_thinking: false}}
+
+  # ---- speculative decoding (speed-only interest; quality should equal the plain NVFP4 build) ----
+  - alias: qwen38-27b-nvfp4-mtp
+    repo: sakamakismile/Qwen3.8-27B-MTP-NVFP4  # 20.6 GB, apache-2.0, third-party; W4A4 NVFP4 with bf16 MTP draft head
+    precision: NVFP4 W4A4 + MTP spec-decode
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3, --speculative-config, '{"method":"qwen3_5_mtp","num_speculative_tokens":3}']
+    modes: *qwen_modes
+
+  # ---- small models: precision ablation on Qwen3.5-9B (BF16 vs FP8 vs AWQ) ----
+  - alias: qwen35-9b-bf16
+    repo: Qwen/Qwen3.5-9B                      # 19.3 GB, apache-2.0, unquantized baseline
+    precision: BF16
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+    modes: *qwen_modes
+
+  - alias: qwen35-9b-fp8
+    repo: RedHatAI/Qwen3.5-9B-FP8-dynamic      # 14.0 GB, apache-2.0
+    precision: FP8
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+    modes: *qwen_modes
+
+  - alias: qwen35-9b-awq
+    repo: cyankiwi/Qwen3.5-9B-AWQ-4bit         # 9.1 GB, apache-2.0
+    precision: AWQ INT4
+    serve_args: [--max-num-seqs, 32, --kv-cache-dtype, fp8, --reasoning-parser, qwen3]
+    modes: *qwen_modes
+
+  - alias: gemma4-12b-fp8
+    repo: RedHatAI/gemma-4-12B-it-FP8-Dynamic  # 15.0 GB, apache-2.0
+    precision: FP8
+    serve_args: [--reasoning-parser, gemma4]
+    modes: *gemma_modes

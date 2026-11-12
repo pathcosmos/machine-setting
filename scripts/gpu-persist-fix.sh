@@ -133,12 +133,8 @@ fix_udev() {
         return 0
     fi
 
-    # Backup existing rules
-    if [ -f "$UDEV_FILE" ]; then
-        cp "$UDEV_FILE" "${UDEV_FILE}.gpu-persist-fix.bak"
-    fi
-
-    cat > "$UDEV_FILE" <<'RULE'
+    local desired
+    desired=$(cat <<'RULE'
 # Prevent GPU PCIe power management from putting the GPU to sleep
 # Fixes Xid 79 "GPU has fallen off the bus" on RTX 5060 Ti + Z390
 # Trigger on both add and driver bind events
@@ -147,6 +143,18 @@ ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200"
 ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", ATTR{power/control}="on"
 ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", ATTR{power/control}="on"
 RULE
+)
+    if [ -f "$UDEV_FILE" ] && [ "$(cat "$UDEV_FILE")" = "$desired" ]; then
+        log_skip "udev rule already in place"
+        return 0
+    fi
+
+    # Backup existing rules
+    if [ -f "$UDEV_FILE" ]; then
+        cp "$UDEV_FILE" "${UDEV_FILE}.gpu-persist-fix.bak"
+    fi
+
+    printf '%s\n' "$desired" > "$UDEV_FILE"
     udevadm control --reload-rules
     log_ok "udev rule created: $UDEV_FILE"
     ((CHANGES_MADE++)) || true

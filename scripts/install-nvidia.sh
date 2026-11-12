@@ -72,7 +72,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-kernel-tuning      Skip kernel/sysctl tuning"
             echo "  --extras-only           Install only system tools + kernel tuning (no driver/CUDA/cuDNN)"
             echo "  --driver-version <ver>  Specific driver version (default: auto/recommended)"
-            echo "  --cuda-version <ver>    Specific CUDA version, e.g. 13-0 (default: latest)"
+            echo "  --cuda-version <ver>    Specific CUDA version, e.g. 13-5 (default: latest)"
             echo "  --open-kernel           Force open kernel modules"
             echo "  --proprietary           Force proprietary kernel modules"
             echo ""
@@ -254,8 +254,8 @@ fi
 # Secure Boot warning
 if is_secure_boot; then
     log_warn "Secure Boot is ENABLED"
-    log_warn "DKMS modules require MOK enrollment after installation"
-    log_warn "You will need to reboot and enroll the key in MOK Manager"
+    log_warn "Prebuilt Canonical-signed modules are used when available (no action needed);"
+    log_warn "a DKMS build would instead require MOK enrollment at the next reboot"
 fi
 
 # Sudo check
@@ -341,21 +341,28 @@ run_dry_run_diagnostic() {
         _tag_warn "Disk space: ${avail_mb}MB available, estimated ~${needed_mb}MB needed"
     fi
 
-    # Internet connectivity to NVIDIA repos
+    # Internet connectivity to NVIDIA repos (the host root returns 404, so probe the real repo path)
     local nvidia_reachable=false
-    if command -v wget &>/dev/null; then
-        if wget -q --spider --timeout=5 "https://developer.download.nvidia.com" 2>/dev/null; then
-            nvidia_reachable=true
-        fi
-    elif command -v curl &>/dev/null; then
-        if curl -fsSL --connect-timeout 5 -o /dev/null "https://developer.download.nvidia.com" 2>/dev/null; then
-            nvidia_reachable=true
-        fi
-    fi
+    local repo_base="https://developer.download.nvidia.com/compute/cuda/repos/$(get_repo_arch_string)/x86_64"
+    local repo_index=""
+    repo_index=$(curl -fsSL --connect-timeout 10 --max-time 60 "${repo_base}/Packages" 2>/dev/null \
+        || wget -qO- --timeout=60 "${repo_base}/Packages" 2>/dev/null || true)
+    [ -n "$repo_index" ] && nvidia_reachable=true
     if [ "$nvidia_reachable" = true ]; then
-        _tag_ok "Internet: NVIDIA repos reachable"
+        _tag_ok "Internet: NVIDIA repo reachable ($(get_repo_arch_string))"
+        # Requested CUDA version must exist in this distro's repo
+        if [ "$OPT_CUDA" = true ] && [ -n "$OPT_CUDA_VERSION" ]; then
+            if printf '%s\n' "$repo_index" | grep -qx "Package: cuda-toolkit-${OPT_CUDA_VERSION}"; then
+                _tag_ok "CUDA: cuda-toolkit-${OPT_CUDA_VERSION} available in repo"
+            else
+                local avail_cuda
+                avail_cuda=$(printf '%s\n' "$repo_index" | sed -n 's/^Package: cuda-toolkit-\([0-9]*-[0-9]*\)$/\1/p' | sort -uV | tr '\n' ' ')
+                _tag_fail "CUDA: cuda-toolkit-${OPT_CUDA_VERSION} NOT in $(get_repo_arch_string) repo (available: ${avail_cuda:-none})"
+                blocking_issues=$((blocking_issues + 1))
+            fi
+        fi
     else
-        _tag_fail "Internet: Cannot reach developer.download.nvidia.com"
+        _tag_fail "Internet: Cannot reach NVIDIA repo for $(get_repo_arch_string) (${repo_base})"
         blocking_issues=$((blocking_issues + 1))
     fi
 
@@ -492,7 +499,7 @@ run_dry_run_diagnostic() {
 
     # --- System Tools ---
     printf "  %-22s" "System Tools:"
-    local sys_tools_list=("build-essential" "cmake" "ninja-build" "numactl" "hwloc" "nvtop" "lm-sensors" "fio")
+    local sys_tools_list=("build-essential" "cmake" "ninja-build" "numactl" "hwloc" "nvtop" "btop" "lm-sensors" "fio")
     local sys_installed=() sys_missing=()
     for pkg in "${sys_tools_list[@]}"; do
         if dpkg -l "$pkg" 2>/dev/null | grep -q '^ii'; then
@@ -1105,11 +1112,30 @@ install_driver() {
         fi
     fi
 
+    # Prefer Ubuntu's prebuilt, Canonical-signed modules for the running kernel when available.
+    # nvidia-driver-N depends on "nvidia-dkms-N | linux-modules-nvidia-N-<flavor>"; without this
+    # apt picks DKMS, which needs a compiler and (under Secure Boot) manual MOK enrollment.
+    local modules_pkg="" USING_SIGNED_MODULES=false
+    if [[ "$driver_pkg" =~ ^nvidia-driver-([0-9]+(-server)?(-open)?)$ ]]; then
+        local branch="${BASH_REMATCH[1]}" kver flavor
+        kver=$(uname -r)
+        flavor="${kver##*-}"
+        if apt-cache show "linux-modules-nvidia-${branch}-${kver}" &>/dev/null; then
+            modules_pkg="linux-modules-nvidia-${branch}-${kver}"
+            if apt-cache show "linux-modules-nvidia-${branch}-${flavor}" &>/dev/null; then
+                modules_pkg="$modules_pkg linux-modules-nvidia-${branch}-${flavor}"
+            fi
+            USING_SIGNED_MODULES=true
+            log_info "Using prebuilt signed kernel modules: $modules_pkg"
+        fi
+    fi
+
     log_info "Installing package: $driver_pkg"
-    run_sudo apt-get install -y "$driver_pkg"
+    # shellcheck disable=SC2086
+    run_sudo apt-get install -y $modules_pkg "$driver_pkg"
 
     # Verify installation
-    if dpkg -l | grep -q "nvidia-driver\|cuda-drivers"; then
+    if dpkg -l 2>/dev/null | grep "nvidia-driver\|cuda-drivers" >/dev/null; then
         local installed_ver
         installed_ver=$(dpkg -l 'nvidia-driver-*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || echo "installed")
         log_ok "NVIDIA driver installed ($installed_ver)"
@@ -1117,8 +1143,10 @@ install_driver() {
         log_warn "Driver package installed but could not verify"
     fi
 
-    # Secure Boot: MOK enrollment hint
-    if is_secure_boot; then
+    # Secure Boot: MOK enrollment hint (not needed with Canonical-signed prebuilt modules)
+    if is_secure_boot && [ "$USING_SIGNED_MODULES" = true ]; then
+        log_ok "Secure Boot: using Canonical-signed modules — no MOK enrollment needed"
+    elif is_secure_boot; then
         echo ""
         log_warn "=== SECURE BOOT ACTION REQUIRED ==="
         log_warn "DKMS modules need MOK enrollment to load."
@@ -1379,7 +1407,7 @@ install_system_tools() {
     local build_pkgs="build-essential cmake ninja-build pkg-config"
 
     # GPU monitoring and system utilities
-    local monitoring_pkgs="nvtop lm-sensors"
+    local monitoring_pkgs="nvtop btop lm-sensors"
 
     # NUMA and topology tools (important for multi-GPU)
     local numa_pkgs="numactl hwloc"
@@ -1532,7 +1560,7 @@ apply_kernel_tuning
 if [ "$OPT_EXTRAS_ONLY" = true ]; then
     echo ""
     echo "  === GPU Extras Summary ==="
-    echo "  System tools: ninja-build, hwloc, nvtop, lm-sensors, fio, etc."
+    echo "  System tools: ninja-build, hwloc, nvtop, btop, lm-sensors, fio, etc."
     echo "  Kernel tuning: sysctl + limits applied"
     echo ""
     exit 0
@@ -1547,7 +1575,10 @@ echo "  === NVIDIA Installation Summary ==="
 echo "  GPU: ${GPU_NAME:-Unknown} (${GPU_COUNT:-1}x, tier: ${GPU_TIER})"
 
 if [ "$OPT_DRIVER" = true ] && command -v nvidia-smi &>/dev/null; then
-    echo "  Driver: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo 'installed (reboot may be required)')"
+    _drv_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1) \
+        && [ -n "$_drv_ver" ] && ! [[ "$_drv_ver" == *"has failed"* ]] \
+        || _drv_ver="$(dpkg-query -W -f='${Version}' 'nvidia-driver-*' 2>/dev/null | head -1) (installed, loads after reboot)"
+    echo "  Driver: $_drv_ver"
 fi
 if [ "$OPT_CUDA" = true ] && [ -x /usr/local/cuda/bin/nvcc ]; then
     echo "  CUDA: $(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || echo 'installed')"
@@ -1567,7 +1598,7 @@ echo ""
 if [ "$OPT_DRIVER" = true ]; then
     if ! nvidia-smi &>/dev/null; then
         log_warn "nvidia-smi not working — a REBOOT is required to load the new driver"
-        if is_secure_boot; then
+        if is_secure_boot && dpkg -l 'nvidia-dkms-*' 2>/dev/null | grep '^ii' >/dev/null; then
             log_warn "Secure Boot is enabled — enroll MOK key during reboot"
         fi
     fi

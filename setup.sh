@@ -40,6 +40,7 @@ VENV_CUSTOM_PATH=""
 PROFILE=""
 OPT_NODE=""
 OPT_JAVA=""
+OPT_VLLM=""            # ""=config/prompt, true/false=forced by --vllm / --no-vllm
 OPT_RESUME=false
 OPT_RESET=false
 OPT_FROM=""
@@ -60,6 +61,8 @@ while [[ $# -gt 0 ]]; do
         --no-node)      OPT_NODE=false; INTERACTIVE=false; shift ;;
         --java)         OPT_JAVA=true; INTERACTIVE=false; shift ;;
         --no-java)      OPT_JAVA=false; INTERACTIVE=false; shift ;;
+        --vllm)         OPT_VLLM=true; shift ;;
+        --no-vllm)      OPT_VLLM=false; shift ;;
         --profile)      PROFILE="$2"; INTERACTIVE=false; shift 2 ;;
         --cloud)        OPT_CLOUD=true; INTERACTIVE=false; shift ;;
         --dry-run)      shift; exec bash "$SCRIPT_DIR/scripts/dry-run.sh" "$@" ;;
@@ -71,6 +74,10 @@ while [[ $# -gt 0 ]]; do
         --doctor)       exec bash "$SCRIPT_DIR/scripts/doctor.sh" ;;
         --gpu-doctor)   exec bash "$SCRIPT_DIR/scripts/gpu-doctor.sh" ;;
         --gpu-persist-fix) shift; exec sudo bash "$SCRIPT_DIR/scripts/gpu-persist-fix.sh" "$@" ;;
+        --server)       shift; exec bash "$SCRIPT_DIR/scripts/install-server.sh" "$@" ;;
+        --info)         shift; exec bash "$SCRIPT_DIR/scripts/system-info.sh" "$@" ;;
+        --test)         shift; exec bash "$SCRIPT_DIR/scripts/smoke-test.sh" "$@" ;;
+        --burnin)       shift; exec bash "$SCRIPT_DIR/scripts/gpu-burnin.sh" "$@" ;;
         --recover)      exec bash "$SCRIPT_DIR/scripts/doctor.sh" --recover ;;
         --uninstall)    shift; exec bash "$SCRIPT_DIR/scripts/uninstall.sh" "$@" ;;
         --help|-h)
@@ -83,8 +90,11 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-node         Skip Node.js"
             echo "  --java            Install SDKMAN + Java"
             echo "  --no-java         Skip Java"
+            echo "  --vllm            Also install vLLM in its own venv (~/vllm-env)"
+            echo "  --no-vllm         Skip vLLM even if INSTALL_VLLM=true"
             echo "  --cloud           Cloud/container mode (skip driver/CUDA/kernel tuning)"
-            echo "  --profile <name>  Use profile (gpu-workstation, cloud-server, cpu-server, mac-apple-silicon, laptop, minimal)"
+            echo "  --profile <name>  Use profile (gpu-workstation, gpu-server, cloud-server, cpu-server, mac-apple-silicon, laptop, minimal)"
+            echo "  --server          Server extras only: Docker, monitoring, SMART, update policy, no-sleep (sudo)"
             echo ""
             echo "Diagnostic options:"
             echo "  --dry-run         Full system dry-run diagnostic (all 7 stages)"
@@ -95,6 +105,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --resume          Resume from last failed/incomplete stage"
             echo "  --reset           Reset state and start from scratch"
             echo "  --from <N>        Start from stage N (1-7), mark earlier stages as done"
+            echo "  --info            Print detailed machine spec report (Markdown; -o <file>, --packages)"
+            echo "  --test            Functional smoke test of everything installed (--full adds vLLM serving)"
+            echo "  --burnin          GPU stability + performance test, 6 hours by default (--detach, --quick, --status)"
             echo "  --doctor          Run health check"
             echo "  --gpu-doctor      GPU-specific health diagnostics"
             echo "  --gpu-persist-fix Permanent GPU stability fixes (sudo)"
@@ -243,6 +256,15 @@ if [ "${CLOUD_MODE:-false}" = true ]; then
 fi
 
 # ============================================================
+# Base tools (btop etc.) — every machine; idempotent, so not checkpointed
+# ============================================================
+if [ "${INSTALL_BASE_TOOLS:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "${PREFLIGHT_ONLY:-false}" != true ]; then
+    echo "[+] Base tools (${BASE_TOOLS:-btop})"
+    bash "$SCRIPT_DIR/scripts/install-base-tools.sh" || echo "  Base tools not installed — re-run: ./scripts/install-base-tools.sh"
+    echo ""
+fi
+
+# ============================================================
 # [2/7] NVIDIA GPU Stack (driver, CUDA, cuDNN, NCCL)
 # ============================================================
 if checkpoint_is_done 2 NVIDIA; then
@@ -279,6 +301,11 @@ else
 
     echo "  → Installing NVIDIA stack (driver, CUDA, cuDNN, tools)..."
     bash "$SCRIPT_DIR/scripts/install-nvidia.sh" $NVIDIA_ARGS
+
+    # Re-detect: CUDA version/suffix were unknown before the toolkit was installed,
+    # and the venv stage picks the PyTorch build from them.
+    bash "$SCRIPT_DIR/scripts/detect-hardware.sh" "$HOME/.machine_setting_profile" >/dev/null
+    source "$HOME/.machine_setting_profile"
 
     checkpoint_trap_clear
     checkpoint_complete_stage 2 NVIDIA
@@ -379,6 +406,25 @@ else
     checkpoint_complete_stage 4 VENV
 fi
 echo ""
+
+# ============================================================
+# [4b] vLLM (optional, separate venv; idempotent, so not checkpointed)
+# ============================================================
+if [ "${GPU_BACKEND:-none}" = "cuda" ] && [ "$(uname -s)" = "Linux" ] && [ "${NV_LINK:-false}" != true ]; then
+    if [ -z "$OPT_VLLM" ]; then
+        if [ "$INTERACTIVE" = true ] && [ ! -d "${VLLM_VENV_PATH:-$HOME/vllm-env}" ]; then
+            read -rp "[4b] Install vLLM inference server in its own venv? [y/N]: " INPUT
+            case "${INPUT:-N}" in [Yy]*) OPT_VLLM=true ;; *) OPT_VLLM=false ;; esac
+        else
+            OPT_VLLM="${INSTALL_VLLM:-false}"
+        fi
+    fi
+    if [ "$OPT_VLLM" = true ]; then
+        echo "[4b] vLLM (separate venv)"
+        bash "$SCRIPT_DIR/scripts/install-vllm.sh" || echo "  vLLM install failed — re-run: ./scripts/install-vllm.sh"
+        echo ""
+    fi
+fi
 
 # ============================================================
 # [5/7] Node.js (optional)
@@ -494,11 +540,33 @@ fi
 # Clean up plan file
 [ -f "$PLAN_FILE" ] && rm -f "$PLAN_FILE"
 
+# ============================================================
+# Server extras (optional; idempotent, so not checkpointed)
+# ============================================================
+SERVER_PENDING_REBOOT_NOTE=false
+if [ "${INSTALL_SERVER:-false}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
+    echo ""
+    echo "[+] Server extras (Docker, monitoring, disk health, update policy)"
+    bash "$SCRIPT_DIR/scripts/install-server.sh" || echo "  Server extras had failures — re-run: ./setup.sh --server"
+    # GPU-dependent parts (GPU container test, DCGM exporter) need the driver loaded
+    if [ "${GPU_BACKEND:-none}" = "cuda" ] && ! nvidia-smi &>/dev/null; then
+        SERVER_PENDING_REBOOT_NOTE=true
+    fi
+fi
+
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║          Setup Complete!             ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
+if [ "$SERVER_PENDING_REBOOT_NOTE" = true ]; then
+    echo "  NVIDIA driver loads after a reboot. Then run './setup.sh --server' once more"
+    echo "  to enable GPU containers and GPU metrics."
+    echo ""
+elif [ "${INSTALL_SERVER:-false}" != true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
+    echo "  Always-on server? Add Docker, monitoring, SMART and update policy: ./setup.sh --server"
+    echo ""
+fi
 CURRENT_SHELL="$(basename "${SHELL:-/bin/bash}")"
 case "$CURRENT_SHELL" in
     zsh)  echo "  Run 'source ~/.zshrc' or open a new terminal." ;;

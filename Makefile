@@ -1,4 +1,4 @@
-.PHONY: setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary
+.PHONY: base-tools test test-full burnin burnin-quick burnin-status burnin-report setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary server server-check info vllm
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -84,3 +84,36 @@ cuda-defense-check: ## CUDA process-level health diagnostics (Ollama, VRAM, zomb
 
 cuda-defense-summary: ## CUDA defense quick status (one-line)
 	$(REPO_DIR)/scripts/cuda-defense-check.sh --summary
+
+server: ## Server extras: Docker, monitoring, SMART, update policy, no-sleep (sudo)
+	$(REPO_DIR)/scripts/install-server.sh
+
+server-check: ## Show server extras status (no changes)
+	$(REPO_DIR)/scripts/install-server.sh --check
+
+info: ## Print detailed machine spec report (Markdown) for sharing
+	@$(REPO_DIR)/scripts/system-info.sh
+
+vllm: ## Install vLLM inference server in its own venv (~/vllm-env)
+	$(REPO_DIR)/scripts/install-vllm.sh
+
+test: ## Functional smoke test of everything installed (GPU, Docker, monitoring, runtimes, vLLM import)
+	$(REPO_DIR)/scripts/smoke-test.sh
+
+test-full: ## Smoke test + real vLLM serving test (downloads a small model)
+	$(REPO_DIR)/scripts/smoke-test.sh --full
+
+burnin: ## 6-hour GPU stability + performance test in the background (report at the end)
+	$(REPO_DIR)/scripts/gpu-burnin.sh --detach
+
+burnin-quick: ## 10-minute GPU burn-in check (foreground)
+	$(REPO_DIR)/scripts/gpu-burnin.sh --quick
+
+burnin-status: ## Progress of the running / last GPU burn-in
+	@$(REPO_DIR)/scripts/gpu-burnin.sh --status
+
+burnin-report: ## Print the last GPU burn-in report
+	@$(REPO_DIR)/scripts/gpu-burnin.sh --report
+
+base-tools: ## Install base system tools (btop; list in BASE_TOOLS)
+	$(REPO_DIR)/scripts/install-base-tools.sh

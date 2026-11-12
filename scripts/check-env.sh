@@ -92,7 +92,7 @@ echo "--- GPU Packages ---"
 "$PY" -c "import transformer_engine as te; print(f'  transformer_engine {te.__version__}')" 2>/dev/null || echo "  transformer_engine: not installed (NGC-only)"
 "$PY" -c "import bitsandbytes; print(f'  bitsandbytes {bitsandbytes.__version__}')" 2>/dev/null || echo "  bitsandbytes: not installed"
 "$PY" -c "import triton; print(f'  triton {triton.__version__}')" 2>/dev/null || echo "  triton: not installed"
-"$PY" -c "import vllm; print(f'  vllm {vllm.__version__}')" 2>/dev/null || echo "  vllm: not installed"
+bash "$(dirname "${BASH_SOURCE[0]}")/install-vllm.sh" --check 2>/dev/null || true   # separate venv
 "$PY" -c "import deepspeed; print(f'  deepspeed {deepspeed.__version__}')" 2>/dev/null || echo "  deepspeed: not installed"
 
 echo ""
