@@ -839,6 +839,19 @@ check_locales() {
     fi
 }
 
+check_reboot_and_verify() {
+    [ "$(uname -s)" = "Linux" ] || return 0
+    local out rc
+    out=$(bash "$SCRIPT_DIR/reboot-check.sh" 2>/dev/null); rc=$?
+    if [ "$rc" -eq 10 ]; then
+        status_warn "Reboot pending ($(echo "$out" | grep -c REBOOT) reason(s): $(echo "$out" | sed -n 's/.*\[REBOOT\] *//p' | head -1)) — Run: sudo reboot, then ./setup.sh --verify"
+    elif [ -f "$HOME/.machine_setting/verify-pending" ]; then
+        status_warn "Installation not verified yet — Run: ./setup.sh --verify"
+    else
+        status_ok "No reboot pending, installation verified"
+    fi
+}
+
 check_vllm() {
     local vpath="${VLLM_VENV_PATH:-$HOME/vllm-env}"
     # Only reported when installed or requested via config
@@ -1074,6 +1087,7 @@ check_disk_health
 check_server_extras
 check_uv
 check_vllm
+check_reboot_and_verify
 check_base_tools
 check_locales
 check_python

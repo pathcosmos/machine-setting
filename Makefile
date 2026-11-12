@@ -1,4 +1,4 @@
-.PHONY: locale base-tools test test-full burnin burnin-quick burnin-status burnin-report setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary server server-check info vllm
+.PHONY: verify-install reboot-check locale base-tools test test-full burnin burnin-quick burnin-status burnin-report setup update push status export venv detect help doctor recover verify uninstall uninstall-dry dry-run reset plan preflight cloud gpu-extras gpu-doctor gpu-persist-fix gpu-persist-check cuda-defense-check cuda-defense-summary server server-check info vllm
 
 SHELL := /bin/bash
 REPO_DIR := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -120,3 +120,9 @@ base-tools: ## Install base system tools (btop; list in BASE_TOOLS)
 
 locale: ## Generate locales: Korean over SSH, English on the console (LOCALE_REMOTE / LOCALE_CONSOLE)
 	$(REPO_DIR)/scripts/install-locale.sh
+
+verify-install: ## Post-install verification: reboot status, GPU-dependent parts, functional test
+	$(REPO_DIR)/scripts/post-install-verify.sh
+
+reboot-check: ## Is a reboot pending, and why?
+	@$(REPO_DIR)/scripts/reboot-check.sh

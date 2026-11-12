@@ -860,33 +860,60 @@ make burnin-report                         # 마지막 리포트 출력
 
 ## Pre-flight Check
 
-`./setup.sh --plan` 또는 `make plan`으로 실제 설치 없이 현재 시스템 상태를 확인합니다.
+설치 전에 이 기기에 **이미 있는 것**을 설치 경로와 관계없이 찾아서 보여주고, 항목별로 무엇을 할지 정합니다. `./setup.sh --plan`(또는 `make plan`)은 확인만 하고, `./setup.sh`는 확인 후 선택한 대로 설치합니다.
 
 ```
-╔══════════════════════════════════════════════════════╗
-║            Pre-flight System Check                  ║
-╚══════════════════════════════════════════════════════╝
+  #   Component              Found on this machine                          Action
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  1   Hardware Profile       generated                                      keep/skip
+  2   Base tools             btop missing                                   INSTALL
+  4   NVIDIA driver          not installed                                  INSTALL
+      → Install the recommended driver (reboot needed)
+  5   CUDA Toolkit           12.4 (target 13.5)                             keep/skip
+  7   Python 3.12 (uv)       uv not installed; also: system 3.14.4, conda   INSTALL
+  10  Node.js                v20.11.0 from apt (not NVM)                    keep/skip
+  11  Java JDK               21.0.4 from apt (not SDKMAN)                   keep/skip
+  ── server extras ──
+  13  Docker                 27.5.1 (docker.io, not docker-ce)              keep/skip
+  14  Monitoring stack       port 3000 already in use                       keep/skip
 
-  System:  Ubuntu 22.04.5 LTS / AMD EPYC 7763 (128 cores) / 512GB RAM / 2847GB free
-  GPU:     NVIDIA A100-SXM4-80GB / CUDA 12.6 (cu126)
-  Profile: gpu-workstation
+  (Y)es, proceed / <number> change an item / (k)eep all existing / (u)pdate all existing / (n)othing / (q)uit: 11
 
-  #  Component            Current Status                 Proposed Action
-  ─────────────────────────────────────────────────────────────────────────────
-  * 1  Hardware Profile     not generated                  → INSTALL
-       Generate ~/.machine_setting_profile
-  * 2  NVIDIA GPU Stack     driver 535 / no CUDA           → INSTALL
-       Install CUDA toolkit, cuDNN, NCCL, system tools
-    3  Python 3.12          3.12.8 installed + uv 0.5.14   (ok)
-  * 4  AI Environment       not created                    → INSTALL
-       Create ~/ai-env + install [core data web + GPU]
-    5  Node.js              v22.12.0 (NVM)                 (ok)
-  * 6  Java 25              not installed                  → INSTALL
-       Install SDKMAN + Java 25
-    7  Shell Integration    configured (.bashrc .zshrc)    (ok)
+  Java JDK — found: 21.0.4 from apt (not SDKMAN)
+    1) INSTALL   Install SDKMAN + Temurin 25 next to it (the SDKMAN one wins in your shells)
+    2) REPLACE   Remove the apt packages (openjdk-21-jdk), then install SDKMAN + Temurin 25
+    3) keep/skip Keep using Java 21.0.4 from apt   [current]
 ```
 
-Interactive 모드에서는 항목별로 토글하여 원하는 것만 설치할 수 있습니다.
+| 동작 | 의미 |
+|------|------|
+| INSTALL | 없으면 설치. 다른 경로로 깔린 것이 있으면 그 옆에 프로젝트 방식으로 추가 설치 |
+| UPDATE | 프로젝트 방식으로 깔린 기존 것을 목표·최신 버전으로 올림 |
+| REPLACE | 기존 것을 지우고 프로젝트 방식으로 다시 설치 |
+| keep/skip | 기존 것을 그대로 두거나 설치하지 않음 |
+
+- **찾아내는 것**: NVIDIA 드라이버(apt·PPA·`.run` 설치 구분), CUDA Toolkit 여러 버전, cuDNN/NCCL, uv와 Python(시스템·pyenv·conda는 참고로 표시), AI venv와 패키지 누락, vLLM, Node.js(NVM 외 apt·snap·fnm·volta), Java(SDKMAN 외 apt OpenJDK), Docker(docker-ce·docker.io·snap), 모니터링 포트 충돌, 서버 설정 적용 여부.
+- **기본값은 유지**: 이미 있는 것은 건드리지 않는 것이 기본입니다. 기본값을 바꾸려면 `--update-existing`(프로젝트 방식으로 깔린 것을 업데이트) 또는 `--replace-existing`(다른 경로로 깔린 것까지 교체; 프로젝트 방식으로 깔린 것은 업데이트만).
+- **비대화형 실행**(`--profile` 등)에서도 같은 감지를 하고 표를 출력한 뒤 질문 없이 진행합니다.
+- **교체가 지우는 것**: apt의 nodejs·OpenJDK 패키지, 배포판·snap Docker(컨테이너와 이미지는 옮기지 않음), `.run`으로 설치한 드라이버, venv 디렉터리. 시스템 Python·pyenv·conda는 어떤 경우에도 지우지 않습니다.
+- **서버 구성 항목**은 프로필이 `gpu-server`이거나 `--with-server`를 주면 설치 대상으로 제안됩니다.
+
+### 재부팅과 검증
+
+재부팅이 필요한 작업(드라이버, 커널 파라미터, 새 커널)은 한 번의 실행 안에서 모두 설치하고, 끝에서 사유를 모아 **한 번만** 안내합니다.
+
+```
+  REBOOT REQUIRED — one reboot covers all of the following
+    • NVIDIA driver is installed but not loaded
+    • Kernel parameters not active yet: pcie_aspm=off pcie_port_pm=off ...
+    1. Reboot now:            sudo reboot
+    2. After logging back in: ./setup.sh --verify
+```
+
+- **재부팅 후**: `./setup.sh --verify`(또는 `make verify-install`)가 드라이버가 올라와야 가능한 부분(하드웨어 프로필 갱신, GPU 지표 수집기)을 마무리하고 [기능 테스트](#testing--burn-in)를 실행합니다. 통과할 때까지 로그인할 때마다 한 줄 알림이 나옵니다.
+- **재부팅이 필요 없으면** setup이 끝에서 바로 기능 테스트를 실행합니다(`--no-verify`로 생략).
+- **상태 확인**: `make reboot-check`는 설치 기록이 아니라 기기 상태(로드된 드라이버, 실행 중인 커널 옵션·버전, 배포판의 재부팅 표시, 그룹 적용 여부)를 보고 판단합니다. `make doctor`에도 포함됩니다.
+- GPU가 장시간 부하 테스트를 통과한 적이 없으면 검증 끝에 `make burnin`을 안내합니다.
 
 ---
 

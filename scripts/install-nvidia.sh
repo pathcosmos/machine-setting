@@ -34,6 +34,10 @@ OPT_KERNEL_TUNING=true
 OPT_UNINSTALL=false
 OPT_DRY_RUN=false
 OPT_EXTRAS_ONLY=false
+OPT_DRIVER_UPDATE=false     # existing driver: upgrade its packages in place
+OPT_DRIVER_REPLACE=false    # existing driver: remove it, then install
+OPT_CUDA_UPDATE=false       # existing toolkit: install the requested/latest one as well
+OPT_LIBS_UPDATE=false       # existing cuDNN/NCCL: upgrade
 OPT_DRIVER_VERSION="${NVIDIA_DRIVER_VERSION:-}"   # empty = auto (recommended)
 OPT_CUDA_VERSION="${NVIDIA_CUDA_VERSION:-}"       # empty = latest
 OPT_OPEN_KERNEL="${NVIDIA_OPEN_KERNEL:-auto}"     # auto | true | false
@@ -45,6 +49,11 @@ while [[ $# -gt 0 ]]; do
         --enterprise)        OPT_ENTERPRISE=true; shift ;;
         --no-enterprise)     OPT_ENTERPRISE=false; shift ;;
         --no-cuda)           OPT_CUDA=false; OPT_CUDNN=false; OPT_NCCL=false; shift ;;
+        --no-cuda-toolkit)   OPT_CUDA=false; shift ;;
+        --update-driver)     OPT_DRIVER_UPDATE=true; shift ;;
+        --replace-driver)    OPT_DRIVER_REPLACE=true; shift ;;
+        --update-cuda)       OPT_CUDA_UPDATE=true; shift ;;
+        --update-libs)       OPT_LIBS_UPDATE=true; shift ;;
         --no-cudnn)          OPT_CUDNN=false; shift ;;
         --no-nccl)           OPT_NCCL=false; shift ;;
         --no-container-toolkit) OPT_CONTAINER_TOOLKIT=false; shift ;;
@@ -1052,8 +1061,32 @@ install_driver() {
 
     log_info "Installing NVIDIA driver..."
 
+    # An existing driver the user chose to replace: remove it first (vendor installer or packages)
+    if [ "$OPT_DRIVER_REPLACE" = true ]; then
+        if [ -x /usr/bin/nvidia-uninstall ]; then
+            log_info "Removing driver installed with the NVIDIA .run installer..."
+            run_sudo /usr/bin/nvidia-uninstall -s || log_warn "nvidia-uninstall reported a problem"
+        fi
+        log_info "Removing existing driver packages..."
+        run_sudo apt-get purge -y 'nvidia-driver-*' 'nvidia-dkms-*' 'linux-modules-nvidia-*' 'libnvidia-*' 2>/dev/null || true
+        run_sudo apt-get autoremove -y 2>/dev/null || true
+    # An existing packaged driver the user chose to update: upgrade what is installed, same branch
+    elif [ "$OPT_DRIVER_UPDATE" = true ] && [ ! -x /usr/bin/nvidia-uninstall ]; then
+        local installed_pkgs
+        installed_pkgs=$(dpkg-query -W -f='${Status} ${Package}\n' 'nvidia-*' 'libnvidia-*' 'linux-modules-nvidia-*' 2>/dev/null \
+            | awk '/^install ok installed/ {print $4}' | tr '\n' ' ' || true)
+        if [ -n "$installed_pkgs" ]; then
+            log_info "Upgrading installed NVIDIA driver packages..."
+            run_sudo apt-get update -qq
+            # shellcheck disable=SC2086
+            run_sudo apt-get install -y --only-upgrade $installed_pkgs
+            log_ok "Driver packages are at the newest version of their branch (reboot if the version changed)"
+            return 0
+        fi
+    fi
+
     # Check if driver is already installed and working
-    if command -v nvidia-smi &>/dev/null; then
+    if [ "$OPT_DRIVER_REPLACE" != true ] && command -v nvidia-smi &>/dev/null; then
         local existing_ver
         existing_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
         if [ -n "$existing_ver" ]; then
@@ -1172,12 +1205,12 @@ install_cuda() {
         if [ -n "$existing_cuda" ]; then
             if [ -n "$OPT_CUDA_VERSION" ]; then
                 local requested_dotted="${OPT_CUDA_VERSION//-/.}"
-                if [ "$existing_cuda" = "$requested_dotted" ]; then
+                if [ "$existing_cuda" = "$requested_dotted" ] && [ "$OPT_CUDA_UPDATE" != true ]; then
                     log_ok "CUDA Toolkit already installed ($existing_cuda)"
                     return 0
                 fi
                 log_info "Existing CUDA $existing_cuda differs from requested $requested_dotted"
-            else
+            elif [ "$OPT_CUDA_UPDATE" != true ]; then
                 log_ok "CUDA Toolkit already installed ($existing_cuda)"
                 return 0
             fi
@@ -1243,7 +1276,7 @@ install_cudnn() {
     local cudnn_pkg="cudnn9-cuda-${cuda_major}"
 
     # Check if already installed
-    if dpkg -l "$cudnn_pkg" 2>/dev/null | grep -q '^ii'; then
+    if [ "$OPT_LIBS_UPDATE" != true ] && dpkg -l "$cudnn_pkg" 2>/dev/null | grep -q '^ii'; then
         local cudnn_ver
         cudnn_ver=$(dpkg -l "$cudnn_pkg" 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1)
         log_ok "cuDNN already installed ($cudnn_ver)"
@@ -1290,7 +1323,7 @@ install_nccl() {
 
     local nccl_pkg="libnccl2 libnccl-dev"
 
-    if dpkg -l libnccl2 2>/dev/null | grep -q '^ii'; then
+    if [ "$OPT_LIBS_UPDATE" != true ] && dpkg -l libnccl2 2>/dev/null | grep -q '^ii'; then
         local nccl_ver
         nccl_ver=$(dpkg -l libnccl2 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1)
         log_ok "NCCL already installed ($nccl_ver)"

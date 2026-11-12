@@ -8,6 +8,18 @@ echo "=== Java Setup ==="
 
 export SDKMAN_DIR="${SDKMAN_DIR:-$HOME/.sdkman}"
 
+# JAVA_REPLACE_SYSTEM=true (pre-flight "replace"): remove distro JDK/JRE packages so only the SDKMAN one remains
+if [ "${JAVA_REPLACE_SYSTEM:-false}" = true ] && command -v apt-get &>/dev/null; then
+    OLD_JAVA_PKGS=$(dpkg-query -W -f='${Status} ${Package}\n' 'openjdk-*-jdk*' 'openjdk-*-jre*' 'default-jdk*' 'default-jre*' 2>/dev/null \
+        | awk '/^install ok installed/ {print $4}' | tr '\n' ' ' || true)
+    if [ -n "$OLD_JAVA_PKGS" ]; then
+        echo "Removing apt Java packages: $OLD_JAVA_PKGS"
+        # shellcheck disable=SC2086
+        sudo apt-get purge -y $OLD_JAVA_PKGS
+        sudo apt-get autoremove -y 2>/dev/null || true
+    fi
+fi
+
 # SDKMAN's installer aborts without zip/unzip/curl (not present on a fresh Ubuntu install)
 MISSING_TOOLS=""
 for tool in zip unzip curl; do
@@ -49,7 +61,9 @@ JAVA_CANDIDATE=$(sdk list java 2>/dev/null | grep -oE "${JAVA_VERSION}\.[0-9.+]+
 
 if [ -n "$JAVA_CANDIDATE" ]; then
     sdk install java "$JAVA_CANDIDATE" || true
-    echo "  Java $JAVA_CANDIDATE installed"
+    # `sdk install` only offers to switch; make the requested one the default explicitly
+    sdk default java "$JAVA_CANDIDATE" >/dev/null 2>&1 || true
+    echo "  Java $JAVA_CANDIDATE installed (default)"
 else
     # Fallback: install any matching version
     sdk install java "${JAVA_VERSION}-tem" 2>/dev/null || \

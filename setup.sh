@@ -46,6 +46,9 @@ OPT_RESET=false
 OPT_FROM=""
 OPT_PREFLIGHT=""       # ""=auto in interactive, "plan"=check only, "run"=check then install
 OPT_CLOUD=""           # ""=auto-detect, true=force cloud mode
+OPT_EXISTING="${EXISTING_POLICY:-keep}"   # what to do with things already installed: keep | update | replace
+OPT_VERIFY=true        # run the functional test at the end (or ask for a reboot first)
+OPT_SERVER_PLAN=""     # --with-server: propose the server extras in the plan even if the profile does not
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -65,6 +68,14 @@ while [[ $# -gt 0 ]]; do
         --no-vllm)      OPT_VLLM=false; shift ;;
         --profile)      PROFILE="$2"; INTERACTIVE=false; shift 2 ;;
         --cloud)        OPT_CLOUD=true; INTERACTIVE=false; shift ;;
+        --existing)         OPT_EXISTING="$2"; shift 2 ;;
+        --keep-existing)    OPT_EXISTING=keep; shift ;;
+        --update-existing)  OPT_EXISTING=update; shift ;;
+        --replace-existing) OPT_EXISTING=replace; shift ;;
+        --with-server)      OPT_SERVER_PLAN=true; shift ;;
+        --no-verify)        OPT_VERIFY=false; shift ;;
+        --verify)           shift; exec bash "$SCRIPT_DIR/scripts/post-install-verify.sh" "$@" ;;
+        --reboot-check)     exec bash "$SCRIPT_DIR/scripts/reboot-check.sh" ;;
         --dry-run)      shift; exec bash "$SCRIPT_DIR/scripts/dry-run.sh" "$@" ;;
         --plan)         exec bash "$SCRIPT_DIR/scripts/preflight.sh" --check-only ;;
         --preflight)    OPT_PREFLIGHT="run"; shift ;;
@@ -95,6 +106,17 @@ while [[ $# -gt 0 ]]; do
             echo "  --cloud           Cloud/container mode (skip driver/CUDA/kernel tuning)"
             echo "  --profile <name>  Use profile (gpu-workstation, gpu-server, cloud-server, cpu-server, mac-apple-silicon, laptop, minimal)"
             echo "  --server          Server extras only: Docker, monitoring, SMART, update policy, no-sleep (sudo)"
+            echo "  --with-server     Include the server extras in this run's plan"
+            echo ""
+            echo "Already-installed software (decided per item in the pre-flight screen; these set the default):"
+            echo "  --keep-existing     Leave existing installs alone (default)"
+            echo "  --update-existing   Update existing installs to the target / latest version"
+            echo "  --replace-existing  Also replace installs that came from elsewhere (apt JDK, distro Docker, .run driver)"
+            echo ""
+            echo "After install:"
+            echo "  --verify          Post-install check: reboot status, GPU-dependent parts, functional test"
+            echo "  --no-verify       Do not run the functional test at the end of setup"
+            echo "  --reboot-check    Show whether a reboot is pending and why"
             echo ""
             echo "Diagnostic options:"
             echo "  --dry-run         Full system dry-run diagnostic (all 7 stages)"
@@ -135,17 +157,40 @@ fi
 PLAN_FILE="$SCRIPT_DIR/env/.preflight_plan"
 USE_PLAN=false
 
-if [ "$OPT_PREFLIGHT" = "run" ] || { [ "$INTERACTIVE" = true ] && [ "$OPT_RESUME" = false ] && [ "$OPT_RESET" = false ] && [ -z "$OPT_FROM" ]; }; then
-    if bash "$SCRIPT_DIR/scripts/preflight.sh"; then
-        if [ -f "$PLAN_FILE" ]; then
-            source "$PLAN_FILE"
-            USE_PLAN=true
+PREFLIGHT_ARGS=(--existing "$OPT_EXISTING")
+[ -n "$PROFILE" ] && PREFLIGHT_ARGS+=(--profile "$PROFILE")
+[ "$OPT_VLLM" = true ] && PREFLIGHT_ARGS+=(--vllm)
+[ "$OPT_VLLM" = false ] && PREFLIGHT_ARGS+=(--no-vllm)
+[ "$OPT_NODE" = true ] && PREFLIGHT_ARGS+=(--node)
+[ "$OPT_NODE" = false ] && PREFLIGHT_ARGS+=(--no-node)
+[ "$OPT_JAVA" = true ] && PREFLIGHT_ARGS+=(--java)
+[ "$OPT_JAVA" = false ] && PREFLIGHT_ARGS+=(--no-java)
+[ "$OPT_SERVER_PLAN" = true ] && PREFLIGHT_ARGS+=(--server)
+PREFLIGHT_ARGS+=(--python-version "$PYTHON_VERSION")
+
+if [ "$OPT_RESUME" = false ] && [ "$OPT_RESET" = false ] && [ -z "$OPT_FROM" ]; then
+    if [ "$OPT_PREFLIGHT" = "run" ] || [ "$INTERACTIVE" = true ]; then
+        # Interactive: show what exists and let the user pick install / update / replace / keep per item
+        if bash "$SCRIPT_DIR/scripts/preflight.sh" "${PREFLIGHT_ARGS[@]}"; then
+            [ -f "$PLAN_FILE" ] && { source "$PLAN_FILE"; USE_PLAN=true; }
+        else
+            echo "  Setup cancelled by pre-flight check."
+            exit 0
         fi
     else
-        echo "  Setup cancelled by pre-flight check."
-        exit 0
+        # Non-interactive: same detection, defaults from the --existing policy, no questions
+        if bash "$SCRIPT_DIR/scripts/preflight.sh" --quiet "${PREFLIGHT_ARGS[@]}"; then
+            [ -f "$PLAN_FILE" ] && { source "$PLAN_FILE"; USE_PLAN=true; }
+        else
+            echo "  Pre-flight detection failed — continuing with profile defaults."
+        fi
     fi
 fi
+
+# Plan helpers. Without a plan (--resume / --from / --reset) every stage behaves as before.
+plan_of()    { local v="PLAN_$1"; [ "$USE_PLAN" = true ] && echo "${!v:-}" || echo ""; }
+plan_wants() { case "$(plan_of "$1")" in run|update|replace) return 0 ;; esac; return 1; }
+plan_skips() { [ "$(plan_of "$1")" = "skip" ]; }
 
 # ============================================================
 echo ""
@@ -208,7 +253,7 @@ fi
 # ============================================================
 # [1/7] Hardware Detection
 # ============================================================
-if checkpoint_is_done 1 HARDWARE; then
+if checkpoint_is_done 1 HARDWARE && ! plan_wants HARDWARE; then
     echo "[1/7] Hardware Detection... already done, skipping"
     [ -f "$HOME/.machine_setting_profile" ] && source "$HOME/.machine_setting_profile"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_HARDWARE:-}" = "skip" ]; then
@@ -258,7 +303,7 @@ fi
 # ============================================================
 # Base tools (btop etc.) — every machine; idempotent, so not checkpointed
 # ============================================================
-if [ "${INSTALL_BASE_TOOLS:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "${PREFLIGHT_ONLY:-false}" != true ]; then
+if [ "${INSTALL_BASE_TOOLS:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && ! plan_skips BASE_TOOLS; then
     echo "[+] Base tools (${BASE_TOOLS:-btop})"
     bash "$SCRIPT_DIR/scripts/install-base-tools.sh" || echo "  Base tools not installed — re-run: ./scripts/install-base-tools.sh"
     echo ""
@@ -267,7 +312,7 @@ fi
 # ============================================================
 # Locales (Korean over SSH, English on the console) — idempotent, not checkpointed
 # ============================================================
-if [ "${INSTALL_LOCALES:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
+if [ "${INSTALL_LOCALES:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ] && ! plan_skips LOCALES; then
     echo "[+] Locales (remote: ${LOCALE_REMOTE:-ko_KR.UTF-8}, console: ${LOCALE_CONSOLE:-en_US.UTF-8})"
     bash "$SCRIPT_DIR/scripts/install-locale.sh" || echo "  Locales not fully set up — re-run: ./scripts/install-locale.sh"
     echo ""
@@ -276,7 +321,7 @@ fi
 # ============================================================
 # [2/7] NVIDIA GPU Stack (driver, CUDA, cuDNN, NCCL)
 # ============================================================
-if checkpoint_is_done 2 NVIDIA; then
+if checkpoint_is_done 2 NVIDIA && ! plan_wants NVIDIA; then
     echo "[2/7] NVIDIA GPU Stack... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_NVIDIA:-}" = "skip" ]; then
     echo "[2/7] NVIDIA GPU Stack... skipped (pre-flight)"
@@ -304,6 +349,20 @@ else
     [ "${NVIDIA_CONTAINER_TOOLKIT:-true}" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-container-toolkit"
     [ "${NVIDIA_SYSTEM_TOOLS:-true}" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-system-tools"
     [ "${NVIDIA_KERNEL_TUNING:-true}" = false ] && NVIDIA_ARGS="$NVIDIA_ARGS --no-kernel-tuning"
+    # Pre-flight decisions for what is already installed
+    case "$(plan_of NVIDIA_DRIVER)" in
+        skip)    [[ "$NVIDIA_ARGS" == *--no-driver* ]] || NVIDIA_ARGS="$NVIDIA_ARGS --no-driver" ;;
+        update)  NVIDIA_ARGS="$NVIDIA_ARGS --update-driver" ;;
+        replace) NVIDIA_ARGS="$NVIDIA_ARGS --replace-driver" ;;
+    esac
+    case "$(plan_of NVIDIA_CUDA)" in
+        skip)   NVIDIA_ARGS="$NVIDIA_ARGS --no-cuda-toolkit" ;;
+        update) NVIDIA_ARGS="$NVIDIA_ARGS --update-cuda" ;;
+    esac
+    case "$(plan_of NVIDIA_LIBS)" in
+        skip)   NVIDIA_ARGS="$NVIDIA_ARGS --no-cudnn --no-nccl" ;;
+        update) NVIDIA_ARGS="$NVIDIA_ARGS --update-libs" ;;
+    esac
 
     checkpoint_start_stage 2 NVIDIA
     checkpoint_trap_setup 2 NVIDIA
@@ -324,13 +383,13 @@ echo ""
 # ============================================================
 # [3/7] Python Setup
 # ============================================================
-if checkpoint_is_done 3 PYTHON; then
+if checkpoint_is_done 3 PYTHON && ! plan_wants PYTHON; then
     echo "[3/7] Python Setup... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_PYTHON:-}" = "skip" ]; then
     echo "[3/7] Python Setup... skipped (pre-flight)"
 else
     echo "[3/7] Python Setup"
-    if [ "$INTERACTIVE" = true ]; then
+    if [ "$INTERACTIVE" = true ] && [ "$USE_PLAN" != true ]; then
         read -rp "  Python version [$PYTHON_VERSION]: " INPUT
         [ -n "$INPUT" ] && PYTHON_VERSION="$INPUT"
     fi
@@ -340,6 +399,7 @@ else
     checkpoint_trap_setup 3 PYTHON
 
     echo "  → Installing Python $PYTHON_VERSION via uv..."
+    [ "$(plan_of PYTHON)" = update ] && export PYTHON_UPDATE=true
     bash "$SCRIPT_DIR/scripts/install-python.sh" "$PYTHON_VERSION"
 
     checkpoint_trap_clear
@@ -350,7 +410,7 @@ echo ""
 # ============================================================
 # [4/7] AI Environment
 # ============================================================
-if checkpoint_is_done 4 VENV; then
+if checkpoint_is_done 4 VENV && ! plan_wants VENV; then
     echo "[4/7] AI Environment... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_VENV:-}" = "skip" ]; then
     echo "[4/7] AI Environment... skipped (pre-flight)"
@@ -395,6 +455,10 @@ else
         fi
     fi
 
+    case "$(plan_of VENV)" in
+        replace)    export VENV_RECREATE=true ;;
+        update|run) export VENV_RECREATE=false ;;
+    esac
     checkpoint_start_stage 4 VENV
     checkpoint_save_metadata "$RESOLVED_VENV_PATH" "$PYTHON_VERSION"
     checkpoint_trap_setup 4 VENV
@@ -420,16 +484,22 @@ echo ""
 # [4b] vLLM (optional, separate venv; idempotent, so not checkpointed)
 # ============================================================
 if [ "${GPU_BACKEND:-none}" = "cuda" ] && [ "$(uname -s)" = "Linux" ] && [ "${NV_LINK:-false}" != true ]; then
-    if [ -z "$OPT_VLLM" ]; then
-        if [ "$INTERACTIVE" = true ] && [ ! -d "${VLLM_VENV_PATH:-$HOME/vllm-env}" ]; then
-            read -rp "[4b] Install vLLM inference server in its own venv? [y/N]: " INPUT
-            case "${INPUT:-N}" in [Yy]*) OPT_VLLM=true ;; *) OPT_VLLM=false ;; esac
-        else
-            OPT_VLLM="${INSTALL_VLLM:-false}"
+    VLLM_ACTION="$(plan_of VLLM)"
+    if [ -z "$VLLM_ACTION" ]; then
+        # No plan: flag, else config, else ask once on an interactive first install
+        if [ -z "$OPT_VLLM" ]; then
+            if [ "$INTERACTIVE" = true ] && [ ! -d "${VLLM_VENV_PATH:-$HOME/vllm-env}" ]; then
+                read -rp "[4b] Install vLLM inference server in its own venv? [y/N]: " INPUT
+                case "${INPUT:-N}" in [Yy]*) OPT_VLLM=true ;; *) OPT_VLLM=false ;; esac
+            else
+                OPT_VLLM="${INSTALL_VLLM:-false}"
+            fi
         fi
+        [ "$OPT_VLLM" = true ] && VLLM_ACTION=run || VLLM_ACTION=skip
     fi
-    if [ "$OPT_VLLM" = true ]; then
+    if [ "$VLLM_ACTION" != skip ]; then
         echo "[4b] vLLM (separate venv)"
+        [ "$VLLM_ACTION" = replace ] && bash "$SCRIPT_DIR/scripts/install-vllm.sh" --uninstall
         bash "$SCRIPT_DIR/scripts/install-vllm.sh" || echo "  vLLM install failed — re-run: ./scripts/install-vllm.sh"
         echo ""
     fi
@@ -438,14 +508,15 @@ fi
 # ============================================================
 # [5/7] Node.js (optional)
 # ============================================================
-if checkpoint_is_done 5 NODE; then
+if checkpoint_is_done 5 NODE && ! plan_wants NODE; then
     echo "[5/7] Node.js... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_NODE:-}" = "skip" ]; then
     echo "[5/7] Node.js... skipped (pre-flight)"
 else
     echo "[5/7] Node.js (optional)"
-    if [ "$USE_PLAN" = true ] && [ "${PLAN_NODE:-}" = "run" ]; then
+    if plan_wants NODE; then
         OPT_NODE=true
+        [ "$(plan_of NODE)" = replace ] && export NODE_REPLACE_SYSTEM=true
     fi
     if [ -z "$OPT_NODE" ]; then
         if [ "$INTERACTIVE" = true ]; then
@@ -480,14 +551,15 @@ echo ""
 # ============================================================
 # [6/7] Java (optional)
 # ============================================================
-if checkpoint_is_done 6 JAVA; then
+if checkpoint_is_done 6 JAVA && ! plan_wants JAVA; then
     echo "[6/7] Java... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_JAVA:-}" = "skip" ]; then
     echo "[6/7] Java... skipped (pre-flight)"
 else
     echo "[6/7] Java (optional)"
-    if [ "$USE_PLAN" = true ] && [ "${PLAN_JAVA:-}" = "run" ]; then
+    if plan_wants JAVA; then
         OPT_JAVA=true
+        [ "$(plan_of JAVA)" = replace ] && export JAVA_REPLACE_SYSTEM=true
     fi
     if [ -z "$OPT_JAVA" ]; then
         if [ "$INTERACTIVE" = true ]; then
@@ -522,7 +594,7 @@ echo ""
 # ============================================================
 # [7/7] Shell Integration
 # ============================================================
-if checkpoint_is_done 7 SHELL; then
+if checkpoint_is_done 7 SHELL && ! plan_wants SHELL; then
     echo "[7/7] Shell Integration... already done, skipping"
 elif [ "$USE_PLAN" = true ] && [ "${PLAN_SHELL:-}" = "skip" ]; then
     echo "[7/7] Shell Integration... skipped (pre-flight)"
@@ -552,14 +624,22 @@ fi
 # ============================================================
 # Server extras (optional; idempotent, so not checkpointed)
 # ============================================================
-SERVER_PENDING_REBOOT_NOTE=false
-if [ "${INSTALL_SERVER:-false}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
-    echo ""
-    echo "[+] Server extras (Docker, monitoring, disk health, update policy)"
-    bash "$SCRIPT_DIR/scripts/install-server.sh" || echo "  Server extras had failures — re-run: ./setup.sh --server"
-    # GPU-dependent parts (GPU container test, DCGM exporter) need the driver loaded
-    if [ "${GPU_BACKEND:-none}" = "cuda" ] && ! nvidia-smi &>/dev/null; then
-        SERVER_PENDING_REBOOT_NOTE=true
+RUN_SERVER=false
+if [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
+    SERVER_ARGS=()
+    if [ "$USE_PLAN" = true ]; then
+        # One decision per step from the pre-flight plan
+        for pair in DOCKER:docker MONITORING:monitoring UPDATE_POLICY:updates DISK_HEALTH:disk SLEEP:sleep GPU_PERSIST:gpu-persist; do
+            if plan_wants "${pair%%:*}"; then RUN_SERVER=true; else SERVER_ARGS+=("--no-${pair##*:}"); fi
+        done
+        case "$(plan_of DOCKER)" in update|replace) export DOCKER_ACTION="$(plan_of DOCKER)" ;; esac
+    elif [ "${INSTALL_SERVER:-false}" = true ]; then
+        RUN_SERVER=true
+    fi
+    if [ "$RUN_SERVER" = true ]; then
+        echo ""
+        echo "[+] Server extras (Docker, monitoring, disk health, update policy)"
+        bash "$SCRIPT_DIR/scripts/install-server.sh" "${SERVER_ARGS[@]}" || echo "  Server extras had failures — re-run: ./setup.sh --server"
     fi
 fi
 
@@ -568,11 +648,37 @@ echo "╔═══════════════════════�
 echo "║          Setup Complete!             ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
-if [ "$SERVER_PENDING_REBOOT_NOTE" = true ]; then
-    echo "  NVIDIA driver loads after a reboot. Then run './setup.sh --server' once more"
-    echo "  to enable GPU containers and GPU metrics."
+
+# ============================================================
+# One reboot for everything, then verification
+# ============================================================
+# Everything that needs a reboot (driver, kernel parameters, new kernel) was installed above in
+# this single run. reboot-check.sh inspects the machine's state and lists every reason at once.
+PENDING_FILE="$HOME/.machine_setting/verify-pending"
+mkdir -p "$HOME/.machine_setting"
+REBOOT_RC=0
+REBOOT_OUT=$(bash "$SCRIPT_DIR/scripts/reboot-check.sh" 2>/dev/null) || REBOOT_RC=$?
+if [ "$REBOOT_RC" -eq 10 ]; then
+    date -Iseconds > "$PENDING_FILE"
+    echo "  ┌────────────────────────────────────────────────────────────────────┐"
+    echo "  │  REBOOT REQUIRED — one reboot covers all of the following          │"
+    echo "  └────────────────────────────────────────────────────────────────────┘"
+    echo "$REBOOT_OUT" | sed 's/^  \[[A-Z]*\] */    • /'
     echo ""
-elif [ "${INSTALL_SERVER:-false}" != true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
+    echo "    1. Reboot now:            sudo reboot"
+    echo "    2. After logging back in: $SCRIPT_DIR/setup.sh --verify"
+    echo "       (finishes the GPU-dependent parts and runs the functional test;"
+    echo "        your shell will remind you until it has passed)"
+    echo ""
+elif [ "$OPT_VERIFY" = true ]; then
+    [ "$REBOOT_RC" -eq 11 ] && { echo "$REBOOT_OUT" | sed 's/^  \[[A-Z]*\] */  Note: /'; echo "        (log out and back in; tests that need it are skipped for now)"; echo ""; }
+    bash "$SCRIPT_DIR/scripts/post-install-verify.sh" --from-setup || true
+    echo ""
+else
+    echo "  Verification skipped (--no-verify). Run it any time: ./setup.sh --verify"
+    echo ""
+fi
+if [ "$RUN_SERVER" != true ] && [ "${INSTALL_SERVER:-false}" != true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ] && ! command -v docker &>/dev/null; then
     echo "  Always-on server? Add Docker, monitoring, SMART and update policy: ./setup.sh --server"
     echo ""
 fi
