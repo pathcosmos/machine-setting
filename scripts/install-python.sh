@@ -15,11 +15,21 @@ if ! command -v uv &>/dev/null; then
     echo "  uv $(uv --version) installed"
 else
     echo "  uv $(uv --version) already installed"
+    # PYTHON_UPDATE=true (pre-flight "update"): bring uv itself up to date. Only a standalone
+    # install can update itself; one from brew/pip/snap is left to that package manager.
+    if [ "${PYTHON_UPDATE:-false}" = true ]; then
+        uv self update 2>/dev/null && echo "  uv updated to $(uv --version)" \
+            || echo "  uv was not installed standalone — update it with the package manager that installed it"
+    fi
 fi
 
 # Install Python version
 echo "Installing Python ${PYTHON_VERSION}..."
 uv python install "$PYTHON_VERSION"
+if [ "${PYTHON_UPDATE:-false}" = true ]; then
+    # newest patch release of that minor version (existing venvs keep the interpreter they were built with)
+    uv python upgrade "$PYTHON_VERSION" 2>/dev/null || uv python install --reinstall "$PYTHON_VERSION" || true
+fi
 
 # Verify
 PYTHON_BIN=$(uv python find "$PYTHON_VERSION" 2>/dev/null || true)

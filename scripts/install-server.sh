@@ -194,7 +194,21 @@ DISTRO_CODENAME="${VERSION_CODENAME:-}"
 install_docker() {
     echo ""
     echo "── Docker ──"
-    if command -v docker &>/dev/null && docker compose version &>/dev/null; then
+    # DOCKER_ACTION comes from the pre-flight plan: replace = swap a distro/snap Docker for docker-ce,
+    # update = upgrade docker-ce packages. Default: keep whatever Docker is there.
+    if [ "${DOCKER_ACTION:-}" = replace ] && command -v docker &>/dev/null && ! dpkg -s docker-ce &>/dev/null; then
+        log_warn "Replacing the existing Docker with Docker Engine from Docker's repo (containers/images are not migrated)"
+        run_sudo systemctl stop docker docker.socket 2>/dev/null || true
+        run_sudo apt-get purge -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc 2>/dev/null || true
+        command -v snap &>/dev/null && snap list docker &>/dev/null && run_sudo snap remove docker
+        hash -r
+    fi
+    if [ "${DOCKER_ACTION:-}" = update ] && dpkg -s docker-ce &>/dev/null; then
+        log_info "Upgrading Docker Engine packages..."
+        run_sudo apt-get update -qq
+        run_sudo apt-get install -y --only-upgrade docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+        log_ok "Docker upgraded ($(docker --version | sed 's/Docker version //; s/,.*//'))"
+    elif command -v docker &>/dev/null && docker compose version &>/dev/null; then
         log_ok "Docker already installed ($(docker --version | sed 's/Docker version //; s/,.*//'))"
     else
         local base="https://download.docker.com/linux/${DISTRO_ID}"

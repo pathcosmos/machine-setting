@@ -8,6 +8,15 @@ echo "=== Node.js Setup ==="
 
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 
+# NODE_REPLACE_SYSTEM=true (pre-flight "replace"): remove the distro packages so only the NVM one remains
+if [ "${NODE_REPLACE_SYSTEM:-false}" = true ] && command -v apt-get &>/dev/null; then
+    if dpkg -s nodejs &>/dev/null; then
+        echo "Removing apt nodejs/npm packages..."
+        sudo apt-get purge -y nodejs npm 2>/dev/null || sudo apt-get purge -y nodejs
+        sudo apt-get autoremove -y 2>/dev/null || true
+    fi
+fi
+
 # Install NVM if not present
 if [ ! -d "$NVM_DIR" ]; then
     echo "Installing NVM..."

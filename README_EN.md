@@ -123,6 +123,8 @@ Optimal profile is auto-selected based on detection results:
 
 - **Base tools**: `btop` is installed on every machine, GPU or not (right after hardware detection, sudo). List: `BASE_TOOLS`; disable with `INSTALL_BASE_TOOLS=false`. Standalone: `make base-tools`.
 
+- **Locales**: the shell language follows how you connect. SSH, terminal emulators and tmux get `ko_KR.UTF-8` (Korean messages); a direct tty on the machine gets `en_US.UTF-8` (the Linux console cannot draw Hangul). Setup installs both locales and the Korean language pack (`make locale`); `shell/bashrc.d/20-env.sh` does the switching. Values: `LOCALE_REMOTE` / `LOCALE_CONSOLE`; disable with `INSTALL_LOCALES=false`. The system default locale is untouched, so service logs stay as they are. On a machine without the locale, the shell falls back to English or `C.UTF-8`.
+
 ### [2/7] NVIDIA GPU Stack (Linux only)
 
 Automatically installs the system-level NVIDIA GPU software stack. `scripts/install-nvidia.sh` runs 9 sub-stages.
@@ -850,33 +852,60 @@ make burnin-report                         # print the last report
 
 ## Pre-flight Check
 
-Run `./setup.sh --plan` or `make plan` to check system state without installing.
+Before installing, setup finds what is **already on the machine**, however it was installed, and lets you decide per item. `./setup.sh --plan` (or `make plan`) only shows it; `./setup.sh` shows it and then installs what you chose.
 
 ```
-+======================================================+
-|            Pre-flight System Check                    |
-+======================================================+
+  #   Component              Found on this machine                          Action
+  ──────────────────────────────────────────────────────────────────────────────────────────
+  1   Hardware Profile       generated                                      keep/skip
+  2   Base tools             btop missing                                   INSTALL
+  4   NVIDIA driver          not installed                                  INSTALL
+      → Install the recommended driver (reboot needed)
+  5   CUDA Toolkit           12.4 (target 13.5)                             keep/skip
+  7   Python 3.12 (uv)       uv not installed; also: system 3.14.4, conda   INSTALL
+  10  Node.js                v20.11.0 from apt (not NVM)                    keep/skip
+  11  Java JDK               21.0.4 from apt (not SDKMAN)                   keep/skip
+  ── server extras ──
+  13  Docker                 27.5.1 (docker.io, not docker-ce)              keep/skip
+  14  Monitoring stack       port 3000 already in use                       keep/skip
 
-  System:  Ubuntu 22.04.5 LTS / AMD EPYC 7763 (128 cores) / 512GB RAM / 2847GB free
-  GPU:     NVIDIA A100-SXM4-80GB / CUDA 12.6 (cu126)
-  Profile: gpu-workstation
+  (Y)es, proceed / <number> change an item / (k)eep all existing / (u)pdate all existing / (n)othing / (q)uit: 11
 
-  #  Component            Current Status                 Proposed Action
-  ---------------------------------------------------------------------------
-  * 1  Hardware Profile     not generated                  -> INSTALL
-       Generate ~/.machine_setting_profile
-  * 2  NVIDIA GPU Stack     driver 535 / no CUDA           -> INSTALL
-       Install CUDA toolkit, cuDNN, NCCL, system tools
-    3  Python 3.12          3.12.8 installed + uv 0.5.14   (ok)
-  * 4  AI Environment       not created                    -> INSTALL
-       Create ~/ai-env + install [core data web + GPU]
-    5  Node.js              v22.12.0 (NVM)                 (ok)
-  * 6  Java 25              not installed                  -> INSTALL
-       Install SDKMAN + Java 25
-    7  Shell Integration    configured (.bashrc .zshrc)    (ok)
+  Java JDK — found: 21.0.4 from apt (not SDKMAN)
+    1) INSTALL   Install SDKMAN + Temurin 25 next to it (the SDKMAN one wins in your shells)
+    2) REPLACE   Remove the apt packages (openjdk-21-jdk), then install SDKMAN + Temurin 25
+    3) keep/skip Keep using Java 21.0.4 from apt   [current]
 ```
 
-In interactive mode, you can toggle individual items to install only what you need.
+| Action | Meaning |
+|------|------|
+| INSTALL | Install if absent. If something from another source exists, add the managed version next to it |
+| UPDATE | Bring an existing managed install to the target / latest version |
+| REPLACE | Remove what is there and install the managed version |
+| keep/skip | Leave what is there, or do not install |
+
+- **Detected**: NVIDIA driver (apt / PPA / `.run` installer), multiple CUDA Toolkits, cuDNN/NCCL, uv and Python (system, pyenv and conda are listed for information), the AI venv and missing packages, vLLM, Node.js (NVM plus apt, snap, fnm, volta), Java (SDKMAN plus apt OpenJDK), Docker (docker-ce, docker.io, snap), monitoring port conflicts, and whether each server setting is applied.
+- **Default is keep**: existing installs are left alone. Change the default with `--update-existing` (update managed installs) or `--replace-existing` (also replace installs from other sources; managed ones are only updated).
+- **Non-interactive runs** (`--profile` etc.) do the same detection, print the table and proceed without questions.
+- **What REPLACE removes**: apt nodejs / OpenJDK packages, a distro or snap Docker (containers and images are not migrated), a `.run`-installed driver, the venv directory. System Python, pyenv and conda are never removed.
+- **Server extras** are proposed when the profile is `gpu-server` or with `--with-server`.
+
+### Reboot and verification
+
+Everything that needs a reboot (driver, kernel parameters, new kernel) is installed within one run, and the reasons are collected and reported **once** at the end.
+
+```
+  REBOOT REQUIRED — one reboot covers all of the following
+    • NVIDIA driver is installed but not loaded
+    • Kernel parameters not active yet: pcie_aspm=off pcie_port_pm=off ...
+    1. Reboot now:            sudo reboot
+    2. After logging back in: ./setup.sh --verify
+```
+
+- **After the reboot**: `./setup.sh --verify` (or `make verify-install`) finishes the parts that need a loaded driver (hardware profile refresh, GPU metrics exporter) and runs the [functional test](#testing--burn-in). Your shell prints a one-line reminder at login until it has passed.
+- **No reboot needed**: setup runs the functional test right away (`--no-verify` to skip).
+- **Status**: `make reboot-check` looks at the machine's state (loaded driver, running kernel options and version, the distribution's reboot flag, group membership), not at install logs. It is part of `make doctor` too.
+- If the GPU has never passed a long burn-in, verification ends by pointing to `make burnin`.
 
 ---
 

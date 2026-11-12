@@ -70,7 +70,13 @@ fi
 # --- Create venv ---
 if [ -d "$VENV_PATH" ]; then
     echo ""
-    if [ -t 0 ]; then
+    if [ "${VENV_RECREATE:-}" = true ]; then
+        # Decided in the pre-flight plan ("replace")
+        echo "  Recreating venv at $VENV_PATH (chosen in pre-flight)"
+        rm -rf "$VENV_PATH"
+    elif [ "${VENV_RECREATE:-}" = false ]; then
+        echo "  Keeping existing venv at $VENV_PATH, syncing packages (chosen in pre-flight)"
+    elif [ -t 0 ]; then
         # Interactive: ask user
         read -rp "  Venv already exists at $VENV_PATH. Recreate? [y/N]: " RECREATE
         if [[ "$RECREATE" =~ ^[Yy]$ ]]; then

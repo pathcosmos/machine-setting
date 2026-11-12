@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # preflight.sh — Pre-flight system check and installation planner
-# Detects current state, compares with target profile, proposes actions.
+#
+# Finds what is already on the machine (however it was installed), compares it with the target
+# profile and lets you decide per component: install, update, replace, or keep/skip.
 #
 # Usage:
-#   ./scripts/preflight.sh                    # Interactive (detect + plan + confirm)
-#   ./scripts/preflight.sh --quiet            # Non-interactive (detect + write plan)
-#   ./scripts/preflight.sh --check-only       # Show status only, no plan file
-#   ./scripts/preflight.sh --profile <name>   # Force specific profile
+#   ./scripts/preflight.sh                       # Interactive (detect + plan + confirm)
+#   ./scripts/preflight.sh --quiet               # Non-interactive (detect + write plan)
+#   ./scripts/preflight.sh --check-only          # Show status only, no plan file
+#   ./scripts/preflight.sh --profile <name>      # Force specific profile
+#   ./scripts/preflight.sh --existing <policy>   # What to propose for things that already exist:
+#                                                #   keep (default) | update | replace
+#   ./scripts/preflight.sh --server / --vllm     # Propose the server extras / vLLM even if the profile does not
+#
+# Actions written to the plan (env/.preflight_plan, read by setup.sh) as PLAN_<KEY>=<action>:
+#   run      install (nothing there yet, or install the managed version next to a foreign one)
+#   update   bring an existing managed install to the target / latest version
+#   replace  remove what is there and install the managed version
+#   skip     keep what is there / do not install
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,43 +28,65 @@ PLAN_FILE="$REPO_DIR/env/.preflight_plan"
 # --- Load config ---
 source "$REPO_DIR/config/default.conf"
 [ -f "$REPO_DIR/config/machine.conf" ] && source "$REPO_DIR/config/machine.conf"
-
-# --- Load checkpoint library ---
-if [ -f "$SCRIPT_DIR/lib-checkpoint.sh" ]; then
-    source "$SCRIPT_DIR/lib-checkpoint.sh"
-    HAS_CHECKPOINT=true
-else
-    HAS_CHECKPOINT=false
-fi
+source "$SCRIPT_DIR/lib-existing.sh"
+export PATH="$HOME/.local/bin:$PATH"
 
 # --- Parse arguments ---
 MODE="interactive"    # interactive | quiet | check-only
 FORCE_PROFILE=""
+POLICY="${EXISTING_POLICY:-keep}"
+WANT_SERVER=""; WANT_VLLM=""; WANT_NODE=""; WANT_JAVA=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --quiet)      MODE="quiet"; shift ;;
         --check-only) MODE="check-only"; shift ;;
         --profile)    FORCE_PROFILE="$2"; shift 2 ;;
-        --help|-h)
-            echo "Usage: ./scripts/preflight.sh [options]"
-            echo "  --quiet        Non-interactive mode (write plan and exit)"
-            echo "  --check-only   Show status only (no plan file)"
-            echo "  --profile <n>  Force specific profile"
-            exit 0 ;;
+        --existing)   POLICY="$2"; shift 2 ;;
+        --server)     WANT_SERVER=true; shift ;;
+        --vllm)       WANT_VLLM=true; shift ;;
+        --no-vllm)    WANT_VLLM=false; shift ;;
+        --node)       WANT_NODE=true; shift ;;
+        --no-node)    WANT_NODE=false; shift ;;
+        --java)       WANT_JAVA=true; shift ;;
+        --no-java)    WANT_JAVA=false; shift ;;
+        --python-version) PYTHON_VERSION="$2"; shift 2 ;;
+        --help|-h)    sed -n '2,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
+case "$POLICY" in keep|update|replace) ;; *) echo "Unknown --existing policy: $POLICY (keep|update|replace)"; exit 1 ;; esac
 
 # ============================================================
-# Detection Results (parallel arrays)
+# Components (parallel arrays + per-action descriptions)
 # ============================================================
-COMP_NAMES=()        # Component display name
-COMP_KEYS=()         # Internal key (HARDWARE, PYTHON, VENV, NODE, JAVA, SHELL)
-COMP_STATUS=()       # current status description
-COMP_ACTIONS=()      # proposed action: run|skip|update
-COMP_DETAILS=()      # action detail text
-COMP_SELECTED=()     # 1=selected, 0=deselected
+COMP_KEYS=()         # internal key -> PLAN_<KEY>
+COMP_NAMES=()        # display name
+COMP_STATUS=()       # what was found
+COMP_ACTIONS=()      # chosen action: run | update | replace | skip
+COMP_OPTIONS=()      # actions allowed for this component (space separated)
+COMP_GROUP=()        # core | server
+declare -A DESC      # DESC[KEY:action] = what that action does
+declare -A EXISTS    # EXISTS[KEY] = 1 when something is already there
+
+# add KEY NAME STATUS DEFAULT "OPTIONS" [GROUP]
+add() {
+    COMP_KEYS+=("$1"); COMP_NAMES+=("$2"); COMP_STATUS+=("$3"); COMP_ACTIONS+=("$4"); COMP_OPTIONS+=("$5"); COMP_GROUP+=("${6:-core}")
+}
+# Default action for something that already exists, following the policy.
+# by_policy "<options>" [foreign]
+#   update  -> update where offered, otherwise keep
+#   replace -> replace only FOREIGN installs (the point of that policy); managed ones are updated,
+#              never wiped by a blanket policy — pick REPLACE on the item itself for that
+by_policy() {
+    local opts=" $1 " foreign="${2:-}"
+    case "$POLICY" in
+        replace) [ -n "$foreign" ] && [[ "$opts" == *" replace "* ]] && { echo replace; return; }
+                 [[ "$opts" == *" update "* ]] && { echo update; return; } ;;
+        update)  [[ "$opts" == *" update "* ]] && { echo update; return; } ;;
+    esac
+    echo skip
+}
 
 # ============================================================
 # Hardware Detection (non-destructive read)
@@ -112,6 +145,9 @@ detect_system() {
                     _CUDA_VERSION=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\.[0-9]*\).*/\1/p' || true)
                 fi
                 [ -n "$_CUDA_VERSION" ] && _CUDA_SUFFIX="cu$(echo "$_CUDA_VERSION" | tr -d '.')"
+                # The PyTorch build actually selected (toolkit 13.5 -> cu132) lives in the hardware profile
+                _prof_suffix=$(sed -n 's/^CUDA_SUFFIX="\{0,1\}\(cu[0-9]*\)"\{0,1\}$/\1/p' "$HOME/.machine_setting_profile" 2>/dev/null | head -1 || true)
+                [ -n "$_prof_suffix" ] && _CUDA_SUFFIX="$_prof_suffix"
             fi
             ;;
         Darwin)
@@ -167,161 +203,128 @@ detect_system() {
 check_hardware_profile() {
     local profile="$HOME/.machine_setting_profile"
     if [ -f "$profile" ] && grep -q "^HAS_GPU=" "$profile" 2>/dev/null; then
-        local gen_date
-        gen_date=$(grep "^# Auto-generated" "$profile" | sed 's/.*on //' || echo "unknown")
-        COMP_NAMES+=("Hardware Profile")
-        COMP_KEYS+=("HARDWARE")
-        COMP_STATUS+=("generated ($gen_date)")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("Already exists")
-        COMP_SELECTED+=(0)
+        EXISTS[HARDWARE]=1
+        DESC[HARDWARE:update]="Re-detect hardware and rewrite ~/.machine_setting_profile"
+        DESC[HARDWARE:skip]="Keep the current profile"
+        add HARDWARE "Hardware Profile" "generated" "$(by_policy "update skip")" "update skip"
     else
-        COMP_NAMES+=("Hardware Profile")
-        COMP_KEYS+=("HARDWARE")
-        COMP_STATUS+=("not generated")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Generate ~/.machine_setting_profile")
-        COMP_SELECTED+=(1)
+        DESC[HARDWARE:run]="Generate ~/.machine_setting_profile"
+        add HARDWARE "Hardware Profile" "not generated" run "run"
     fi
 }
 
 check_nvidia() {
-    # Skip on non-Linux, non-CUDA systems
     if [ "$(uname -s)" != "Linux" ] || [ "$_GPU_BACKEND" != "cuda" ]; then
-        COMP_NAMES+=("NVIDIA Stack")
-        COMP_KEYS+=("NVIDIA")
-        COMP_STATUS+=("not applicable")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("No NVIDIA GPU or not Linux")
-        COMP_SELECTED+=(0)
-        return
+        return 0                                         # nothing to show on machines without an NVIDIA GPU
     fi
-
-    # Check if INSTALL_NVIDIA is disabled
-    if [ "${INSTALL_NVIDIA:-true}" = false ]; then
-        COMP_NAMES+=("NVIDIA Stack")
-        COMP_KEYS+=("NVIDIA")
-        COMP_STATUS+=("disabled in profile")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("INSTALL_NVIDIA=false")
-        COMP_SELECTED+=(0)
-        return
+    if [ "${INSTALL_NVIDIA:-true}" = false ] || [ "${IS_CLOUD:-false}" = true ]; then
+        DESC[NVIDIA_DRIVER:skip]="Disabled (INSTALL_NVIDIA=false or cloud/container mode)"
+        add NVIDIA_DRIVER "NVIDIA stack" "disabled in profile" skip "skip"
+        return 0
     fi
+    ex_nvidia_driver || true; ex_cuda || true
 
-    local has_driver=false has_cuda=false has_cudnn=false
-    local driver_ver="" cuda_ver="" cudnn_ver=""
-
-    # Check driver
-    if command -v nvidia-smi &>/dev/null; then
-        driver_ver=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || true)
-        [ -n "$driver_ver" ] && has_driver=true
-    fi
-
-    # Check CUDA
-    if command -v nvcc &>/dev/null; then
-        cuda_ver=$(nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
-        [ -n "$cuda_ver" ] && has_cuda=true
-    elif [ -x /usr/local/cuda/bin/nvcc ]; then
-        cuda_ver=$(/usr/local/cuda/bin/nvcc --version 2>/dev/null | sed -n 's/.*release \([0-9]*\.[0-9]*\).*/\1/p' || true)
-        [ -n "$cuda_ver" ] && has_cuda=true
-    fi
-
-    # Check cuDNN
-    cudnn_ver=$(dpkg -l 'cudnn9-*' 2>/dev/null | grep '^ii' | awk '{print $3}' | head -1 || true)
-    [ -n "$cudnn_ver" ] && has_cudnn=true
-
-    if [ "$has_driver" = true ] && [ "$has_cuda" = true ] && [ "$has_cudnn" = true ]; then
-        COMP_NAMES+=("NVIDIA Stack")
-        COMP_KEYS+=("NVIDIA")
-        COMP_STATUS+=("driver $driver_ver / CUDA $cuda_ver / cuDNN $cudnn_ver")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("Fully installed")
-        COMP_SELECTED+=(0)
-    elif [ "$has_driver" = true ] || [ "$has_cuda" = true ]; then
-        local missing=""
-        [ "$has_driver" = false ] && missing+="driver "
-        [ "$has_cuda" = false ] && missing+="CUDA "
-        [ "$has_cudnn" = false ] && missing+="cuDNN "
-        COMP_NAMES+=("NVIDIA Stack")
-        COMP_KEYS+=("NVIDIA")
-        COMP_STATUS+=("partial (missing: $missing)")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Install missing: $missing")
-        COMP_SELECTED+=(1)
+    # --- driver ---
+    local target="${NVIDIA_DRIVER_VERSION:-recommended}"
+    if [ -z "$EX_DRIVER_VER" ] && [ -z "$EX_DRIVER_SRC" ]; then
+        DESC[NVIDIA_DRIVER:run]="Install the $target driver (reboot needed)"
+        DESC[NVIDIA_DRIVER:skip]="Do not install a driver"
+        add NVIDIA_DRIVER "NVIDIA driver" "not installed" run "run skip"
     else
-        COMP_NAMES+=("NVIDIA Stack")
-        COMP_KEYS+=("NVIDIA")
-        COMP_STATUS+=("not installed")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Install driver, CUDA, cuDNN, NCCL, tools")
-        COMP_SELECTED+=(1)
+        EXISTS[NVIDIA_DRIVER]=1
+        local st="${EX_DRIVER_VER:-?} (${EX_DRIVER_SRC:-unknown source}"
+        [ "$EX_DRIVER_LOADED" = true ] && st="$st, loaded)" || st="$st, NOT loaded)"
+        DESC[NVIDIA_DRIVER:skip]="Keep driver ${EX_DRIVER_VER:-as is}"
+        if [ "$EX_DRIVER_SRC" = "run-installer" ]; then
+            DESC[NVIDIA_DRIVER:replace]="Run nvidia-uninstall, then install the $target driver from apt (reboot needed)"
+            add NVIDIA_DRIVER "NVIDIA driver" "$st" "$(by_policy "replace skip" foreign)" "replace skip"
+        else
+            DESC[NVIDIA_DRIVER:update]="Upgrade the driver packages to the newest in their branch (reboot needed)"
+            DESC[NVIDIA_DRIVER:replace]="Purge the driver packages and install the $target driver (reboot needed)"
+            add NVIDIA_DRIVER "NVIDIA driver" "$st" "$(by_policy "update replace skip")" "update replace skip"
+        fi
+    fi
+
+    # --- CUDA toolkit ---
+    local want_cuda="${NVIDIA_CUDA_VERSION//-/.}"
+    if [ -z "$EX_CUDA_VERS" ]; then
+        DESC[NVIDIA_CUDA:run]="Install CUDA Toolkit ${want_cuda:-(latest in the NVIDIA repo)}"
+        DESC[NVIDIA_CUDA:skip]="Do not install the CUDA Toolkit"
+        add NVIDIA_CUDA "CUDA Toolkit" "not installed" run "run skip"
+    else
+        EXISTS[NVIDIA_CUDA]=1
+        DESC[NVIDIA_CUDA:skip]="Keep CUDA $EX_CUDA_VERS"
+        if [ -n "$want_cuda" ] && [[ " $EX_CUDA_VERS " != *" $want_cuda "* ]]; then
+            DESC[NVIDIA_CUDA:run]="Install CUDA $want_cuda next to $EX_CUDA_VERS and make it the default"
+            add NVIDIA_CUDA "CUDA Toolkit" "$EX_CUDA_VERS (target $want_cuda)" "$( [ "$POLICY" = keep ] && echo skip || echo run )" "run skip"
+        else
+            DESC[NVIDIA_CUDA:update]="Install the latest CUDA Toolkit from the NVIDIA repo next to $EX_CUDA_VERS"
+            add NVIDIA_CUDA "CUDA Toolkit" "$EX_CUDA_VERS" "$(by_policy "update skip")" "update skip"
+        fi
+    fi
+
+    # --- cuDNN / NCCL ---
+    if [ -z "$EX_CUDNN_VER" ]; then
+        DESC[NVIDIA_LIBS:run]="Install cuDNN and NCCL"
+        DESC[NVIDIA_LIBS:skip]="Do not install cuDNN / NCCL"
+        add NVIDIA_LIBS "cuDNN / NCCL" "cuDNN not installed" run "run skip"
+    else
+        EXISTS[NVIDIA_LIBS]=1
+        DESC[NVIDIA_LIBS:update]="Upgrade cuDNN / NCCL packages (installs NCCL if missing)"
+        DESC[NVIDIA_LIBS:skip]="Keep cuDNN $EX_CUDNN_VER${EX_NCCL_VER:+ / NCCL $EX_NCCL_VER}"
+        local d; d=$(by_policy "update skip")
+        add NVIDIA_LIBS "cuDNN / NCCL" "cuDNN $EX_CUDNN_VER / NCCL ${EX_NCCL_VER:-none}" "$d" "update skip"
     fi
 }
 
 check_python() {
-    local target_ver="$PYTHON_VERSION"
-    local python_bin=""
-    local actual_ver=""
-
-    if command -v uv &>/dev/null; then
-        python_bin=$(uv python find "$target_ver" 2>/dev/null || true)
-        if [ -n "$python_bin" ] && [ -x "$python_bin" ]; then
-            actual_ver=$("$python_bin" --version 2>/dev/null | sed 's/Python //')
-        fi
-    fi
-
-    if [ -z "$actual_ver" ] && command -v "python${target_ver}" &>/dev/null; then
-        actual_ver=$("python${target_ver}" --version 2>/dev/null | sed 's/Python //')
-    fi
-
-    if [ -n "$actual_ver" ]; then
-        local uv_ver=""
-        command -v uv &>/dev/null && uv_ver=" + uv $(uv --version 2>/dev/null | head -1 | awk '{print $2}')"
-        COMP_NAMES+=("Python $target_ver")
-        COMP_KEYS+=("PYTHON")
-        COMP_STATUS+=("$actual_ver installed${uv_ver}")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("Already installed")
-        COMP_SELECTED+=(0)
+    local target="$PYTHON_VERSION"
+    ex_python "$target" || true
+    local others="${EX_PY_OTHERS:+; also: $EX_PY_OTHERS}"
+    if [ -z "$EX_UV_VER" ]; then
+        DESC[PYTHON:run]="Install uv and Python $target (other Pythons are left untouched)"
+        DESC[PYTHON:skip]="Do not install uv / Python (the AI environment cannot be built without them)"
+        add PYTHON "Python $target (uv)" "uv not installed${others}" run "run skip"
+    elif [ -z "$EX_UV_PY" ]; then
+        DESC[PYTHON:run]="Install Python $target with the existing uv $EX_UV_VER"
+        DESC[PYTHON:update]="Update uv, then install Python $target"
+        DESC[PYTHON:skip]="Do not install Python $target"
+        add PYTHON "Python $target (uv)" "uv $EX_UV_VER, no Python $target${others}" run "run update skip"
     else
-        COMP_NAMES+=("Python $target_ver")
-        COMP_KEYS+=("PYTHON")
-        COMP_STATUS+=("not found")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Install via uv")
-        COMP_SELECTED+=(1)
+        EXISTS[PYTHON]=1
+        DESC[PYTHON:update]="Update uv ($EX_UV_SRC install) and Python $target to the latest patch release"
+        DESC[PYTHON:skip]="Keep uv $EX_UV_VER and Python $EX_UV_PY"
+        add PYTHON "Python $target (uv)" "$EX_UV_PY, uv $EX_UV_VER${others}" "$(by_policy "update skip")" "update skip"
     fi
 }
 
 check_venv_and_packages() {
     local venv_path="${VENV_DEFAULT_PATH:-$HOME/ai-env}"
+    local group_list="${PACKAGE_GROUPS:-core}"
+    [ "${GPU_PACKAGES:-}" = true ] && group_list="$group_list + GPU"
 
     if [ ! -d "$venv_path" ]; then
-        # No venv — need full install
-        local group_list="${PACKAGE_GROUPS:-core}"
-        [ "${GPU_PACKAGES:-}" = true ] && group_list="$group_list + GPU"
-        COMP_NAMES+=("AI Environment")
-        COMP_KEYS+=("VENV")
-        COMP_STATUS+=("not created")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Create $venv_path + install [$group_list]")
-        COMP_SELECTED+=(1)
+        DESC[VENV:run]="Create $venv_path and install [$group_list]"
+        DESC[VENV:skip]="Do not create the AI environment"
+        add VENV "AI Environment" "not created" run "run skip"
         return
     fi
-
+    EXISTS[VENV]=1
+    DESC[VENV:replace]="Delete $venv_path and build it again from the requirement files"
     if [ ! -x "$venv_path/bin/python" ]; then
-        COMP_NAMES+=("AI Environment")
-        COMP_KEYS+=("VENV")
-        COMP_STATUS+=("broken (missing bin/python)")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Recreate $venv_path")
-        COMP_SELECTED+=(1)
+        add VENV "AI Environment" "broken (missing bin/python)" replace "replace skip"
+        DESC[VENV:skip]="Leave the broken environment as it is"
         return
     fi
-
     # Venv exists — check packages
     local installed_count
-    installed_count=$("$venv_path/bin/pip" list 2>/dev/null | tail -n +3 | wc -l | tr -d ' ')
+    # uv-created venvs have no pip of their own: ask uv, fall back to the venv's pip
+    _venv_freeze() {
+        if command -v uv &>/dev/null; then uv pip freeze --python "$venv_path/bin/python" 2>/dev/null || true
+        else "$venv_path/bin/python" -m pip freeze 2>/dev/null || true; fi
+    }
+    local freeze_out; freeze_out=$(_venv_freeze)
+    installed_count=$(printf '%s\n' "$freeze_out" | grep -c . || true)
 
     # Compare installed vs required
     local installed_tmp required_tmp
@@ -329,8 +332,8 @@ check_venv_and_packages() {
     required_tmp=$(mktemp)
 
     # Installed packages (lowercase names)
-    "$venv_path/bin/pip" freeze 2>/dev/null | \
-        sed 's/==.*//; s/\+.*//' | awk '{print tolower($0)}' | sort -u > "$installed_tmp"
+    printf '%s\n' "$freeze_out" | \
+        sed 's/==.*//; s/\+.*//' | awk '{print tolower($0)}' | tr '_.' '--' | sort -u > "$installed_tmp"
 
     # Required packages from applicable groups
     local _groups="${PACKAGE_GROUPS:-core}"
@@ -338,19 +341,19 @@ check_venv_and_packages() {
         local req_file="$PKG_DIR/requirements-${group}.txt"
         [ -f "$req_file" ] || continue
         grep -v '^#' "$req_file" | grep -v '^$' | grep -v '^\-' | \
-            sed 's/[>=<!\[].*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' >> "$required_tmp"
+            sed 's/[[:space:]]*#.*//; s/[>=<!\[].*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' | tr '_.' '--' >> "$required_tmp"
     done
 
     # Add compute-specific requirements
     if [ "$_GPU_BACKEND" = "cuda" ] && [ -f "$PKG_DIR/requirements-gpu.txt" ]; then
         grep -v '^#' "$PKG_DIR/requirements-gpu.txt" | grep -v '^$' | grep -v '^\-' | \
-            sed 's/[>=<!\[].*//; s/\+.*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' >> "$required_tmp"
+            sed 's/[[:space:]]*#.*//; s/[>=<!\[].*//; s/\+.*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' | tr '_.' '--' >> "$required_tmp"
     elif [ "$_GPU_BACKEND" = "mps" ] && [ -f "$PKG_DIR/requirements-mps.txt" ]; then
         grep -v '^#' "$PKG_DIR/requirements-mps.txt" | grep -v '^$' | \
-            sed 's/[>=<!\[].*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' >> "$required_tmp"
+            sed 's/[[:space:]]*#.*//; s/[>=<!\[].*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' | tr '_.' '--' >> "$required_tmp"
     elif [ -f "$PKG_DIR/requirements-cpu.txt" ]; then
         grep -v '^#' "$PKG_DIR/requirements-cpu.txt" | grep -v '^$' | \
-            sed 's/[>=<!\[].*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' >> "$required_tmp"
+            sed 's/[[:space:]]*#.*//; s/[>=<!\[].*//; s/[[:space:]]*$//' | awk '{print tolower($0)}' | tr '_.' '--' >> "$required_tmp"
     fi
     sort -u "$required_tmp" -o "$required_tmp"
 
@@ -363,151 +366,247 @@ check_venv_and_packages() {
     required_count=$(wc -l < "$required_tmp" | tr -d ' ')
 
     rm -f "$installed_tmp" "$required_tmp"
-
-    # Determine action
+    DESC[VENV:update]="Sync packages to the pinned versions ($missing_count missing of $required_count)"
+    DESC[VENV:skip]="Keep $venv_path as it is"
+    local st="$venv_path ($installed_count pkgs"
     if [ "$missing_count" -eq 0 ]; then
-        COMP_NAMES+=("AI Environment")
-        COMP_KEYS+=("VENV")
-        COMP_STATUS+=("$venv_path ($installed_count pkgs)")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("All $required_count required packages installed")
-        COMP_SELECTED+=(0)
+        add VENV "AI Environment" "$st)" "$(by_policy "update replace skip")" "update replace skip"
     else
-        local top_missing=""
-        if [ -n "$missing_pkgs" ]; then
-            top_missing=$(echo "$missing_pkgs" | head -3 | tr '\n' ', ' | sed 's/,$//')
-            [ "$missing_count" -gt 3 ] && top_missing="$top_missing ..."
-        fi
-        COMP_NAMES+=("AI Environment")
-        COMP_KEYS+=("VENV")
-        COMP_STATUS+=("$venv_path ($installed_count pkgs)")
-        COMP_ACTIONS+=("update")
-        COMP_DETAILS+=("Install $missing_count missing ($top_missing)")
-        COMP_SELECTED+=(1)
+        # missing packages are an incomplete install, not an "existing resource" decision: propose the sync
+        local d=update; [ "$POLICY" = replace ] && d=replace
+        add VENV "AI Environment" "$st, $missing_count missing)" "$d" "update replace skip"
+    fi
+}
+
+check_vllm() {
+    [ "$_GPU_BACKEND" = "cuda" ] && [ "$(uname -s)" = "Linux" ] || return 0
+    local vpath="${VLLM_VENV_PATH:-$HOME/vllm-env}"
+    local want="${WANT_VLLM:-${INSTALL_VLLM:-false}}"
+    if [ -x "$vpath/bin/python" ]; then
+        EXISTS[VLLM]=1
+        local ver; ver=$("$vpath/bin/python" -c "import importlib.metadata as m; print(m.version('vllm'))" 2>/dev/null || echo "?")
+        DESC[VLLM:update]="Upgrade vLLM to ${VLLM_VERSION:-the latest release}"
+        DESC[VLLM:replace]="Delete $vpath and install vLLM again"
+        DESC[VLLM:skip]="Keep vLLM $ver"
+        add VLLM "vLLM (own venv)" "$ver at $vpath" "$(by_policy "update replace skip")" "update replace skip"
+    else
+        DESC[VLLM:run]="Install vLLM ${VLLM_VERSION:-(latest)} in its own venv at $vpath"
+        DESC[VLLM:skip]="Do not install vLLM"
+        add VLLM "vLLM (own venv)" "not installed" "$( [ "$want" = true ] && echo run || echo skip )" "run skip"
     fi
 }
 
 check_node() {
-    local want_node="${INSTALL_NODE:-true}"
-    local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
-
-    if [ "$want_node" = false ]; then
-        COMP_NAMES+=("Node.js")
-        COMP_KEYS+=("NODE")
-        COMP_STATUS+=("not in profile")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("Profile does not include Node.js")
-        COMP_SELECTED+=(0)
-        return
-    fi
-
-    if [ -d "$nvm_dir" ] && [ -s "$nvm_dir/nvm.sh" ]; then
-        # Load NVM to check version
-        source "$nvm_dir/nvm.sh" 2>/dev/null || true
-        if command -v node &>/dev/null; then
-            local node_ver
-            node_ver=$(node --version 2>/dev/null || echo "unknown")
-            COMP_NAMES+=("Node.js")
-            COMP_KEYS+=("NODE")
-            COMP_STATUS+=("$node_ver (NVM)")
-            COMP_ACTIONS+=("skip")
-            COMP_DETAILS+=("Already installed")
-            COMP_SELECTED+=(0)
-        else
-            COMP_NAMES+=("Node.js")
-            COMP_KEYS+=("NODE")
-            COMP_STATUS+=("NVM present, no Node active")
-            COMP_ACTIONS+=("run")
-            COMP_DETAILS+=("Install Node.js ${NODE_VERSION:-LTS} via NVM")
-            COMP_SELECTED+=(1)
+    ex_node || true
+    local want="${WANT_NODE:-${INSTALL_NODE:-true}}" target="${NODE_VERSION:-LTS}"
+    local foreign="${EX_NODE_FOREIGN_VER:+$EX_NODE_FOREIGN_VER from $EX_NODE_FOREIGN_SRC}"
+    if [ -n "$EX_NODE_NVM_VER" ]; then
+        EXISTS[NODE]=1
+        DESC[NODE:update]="Install the newest Node.js $target with NVM and make it the default (old versions stay)"
+        DESC[NODE:skip]="Keep Node.js $EX_NODE_NVM_VER"
+        add NODE "Node.js" "$EX_NODE_NVM_VER (NVM)${foreign:+; also $foreign}" "$(by_policy "update skip")" "update skip"
+    elif [ -n "$foreign" ]; then
+        EXISTS[NODE]=1
+        DESC[NODE:skip]="Keep using Node.js $foreign"
+        DESC[NODE:run]="Install NVM + Node.js $target next to it (the NVM one wins in your shells)"
+        local opts="run skip"
+        if [ "$EX_NODE_FOREIGN_SRC" = "apt" ]; then
+            DESC[NODE:replace]="Remove the apt nodejs/npm packages, then install NVM + Node.js $target"
+            opts="run replace skip"
         fi
+        local d=skip; [ "$POLICY" = replace ] && [[ "$opts" == *replace* ]] && d=replace
+        [ "$POLICY" = update ] && d=run
+        [ "$want" = false ] && d=skip
+        add NODE "Node.js" "$foreign (not NVM)" "$d" "$opts"
     else
-        COMP_NAMES+=("Node.js")
-        COMP_KEYS+=("NODE")
-        COMP_STATUS+=("not installed")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Install NVM + Node.js ${NODE_VERSION:-LTS}")
-        COMP_SELECTED+=(1)
+        DESC[NODE:run]="Install NVM + Node.js $target"
+        DESC[NODE:skip]="Do not install Node.js"
+        add NODE "Node.js" "not installed" "$( [ "$want" = true ] && echo run || echo skip )" "run skip"
     fi
 }
 
 check_java() {
-    local want_java="${INSTALL_JAVA:-true}"
-    local sdk_dir="${SDKMAN_DIR:-$HOME/.sdkman}"
-
-    if [ "$want_java" = false ]; then
-        COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
-        COMP_KEYS+=("JAVA")
-        COMP_STATUS+=("not in profile")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("Profile does not include Java")
-        COMP_SELECTED+=(0)
-        return
-    fi
-
-    if [ -d "$sdk_dir" ] && [ -s "$sdk_dir/bin/sdkman-init.sh" ]; then
-        set +u
-        source "$sdk_dir/bin/sdkman-init.sh" 2>/dev/null || true
-        set -u
-        if command -v java &>/dev/null; then
-            local java_ver
-            java_ver=$(java -version 2>&1 | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "unknown")
-            COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
-            COMP_KEYS+=("JAVA")
-            COMP_STATUS+=("$java_ver (SDKMAN)")
-            COMP_ACTIONS+=("skip")
-            COMP_DETAILS+=("Already installed")
-            COMP_SELECTED+=(0)
-        else
-            COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
-            COMP_KEYS+=("JAVA")
-            COMP_STATUS+=("SDKMAN present, no Java active")
-            COMP_ACTIONS+=("run")
-            COMP_DETAILS+=("Install Java ${JAVA_VERSION:-25} via SDKMAN")
-            COMP_SELECTED+=(1)
+    ex_java || true
+    local want="${WANT_JAVA:-${INSTALL_JAVA:-true}}" target="${JAVA_VERSION:-25}"
+    local foreign="${EX_JAVA_FOREIGN_VER:+$EX_JAVA_FOREIGN_VER from $EX_JAVA_FOREIGN_SRC}"
+    if [ -n "$EX_JAVA_SDK_VER" ]; then
+        EXISTS[JAVA]=1
+        DESC[JAVA:update]="Install the newest Temurin $target with SDKMAN and make it the default (old versions stay)"
+        DESC[JAVA:skip]="Keep Java $EX_JAVA_SDK_VER"
+        local d; d=$(by_policy "update skip")
+        # a different major version than the target is worth pointing out, but still the user's call
+        local note=""; [[ "$EX_JAVA_SDK_VER" != "$target".* ]] && note=", target $target"
+        add JAVA "Java JDK" "$EX_JAVA_SDK_VER (SDKMAN${note})${foreign:+; also $foreign}" "$d" "update skip"
+    elif [ -n "$foreign" ]; then
+        EXISTS[JAVA]=1
+        DESC[JAVA:skip]="Keep using Java $foreign"
+        DESC[JAVA:run]="Install SDKMAN + Temurin $target next to it (the SDKMAN one wins in your shells)"
+        local opts="run skip"
+        if [ "$EX_JAVA_FOREIGN_SRC" = "apt" ]; then
+            DESC[JAVA:replace]="Remove the apt packages ($EX_JAVA_FOREIGN_PKGS), then install SDKMAN + Temurin $target"
+            opts="run replace skip"
         fi
+        local d=skip; [ "$POLICY" = replace ] && [[ "$opts" == *replace* ]] && d=replace
+        [ "$POLICY" = update ] && d=run
+        [ "$want" = false ] && d=skip
+        add JAVA "Java JDK" "$foreign (not SDKMAN)" "$d" "$opts"
     else
-        COMP_NAMES+=("Java ${JAVA_VERSION:-25}")
-        COMP_KEYS+=("JAVA")
-        COMP_STATUS+=("not installed")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Install SDKMAN + Java ${JAVA_VERSION:-25}")
-        COMP_SELECTED+=(1)
+        DESC[JAVA:run]="Install SDKMAN + Temurin $target"
+        DESC[JAVA:skip]="Do not install Java"
+        add JAVA "Java JDK" "not installed" "$( [ "$want" = true ] && echo run || echo skip )" "run skip"
     fi
 }
 
 check_shell() {
-    local marker="# >>> machine_setting >>>"
-    local configured_shells=""
-
+    local marker="# >>> machine_setting >>>" configured=""
     for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        if [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file" 2>/dev/null; then
-            configured_shells+="$(basename "$rc_file") "
-        fi
+        [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file" 2>/dev/null && configured+="$(basename "$rc_file") "
     done
-
-    if [ -n "$configured_shells" ]; then
-        COMP_NAMES+=("Shell Integration")
-        COMP_KEYS+=("SHELL")
-        COMP_STATUS+=("configured ($configured_shells)")
-        COMP_ACTIONS+=("skip")
-        COMP_DETAILS+=("Already in $configured_shells")
-        COMP_SELECTED+=(0)
+    if [ -n "$configured" ]; then
+        EXISTS[SHELL]=1
+        DESC[SHELL:update]="Re-apply the shell block (rc file is backed up first)"
+        DESC[SHELL:skip]="Keep the current shell integration"
+        add SHELL "Shell integration" "configured (${configured% })" "$(by_policy "update skip")" "update skip"
     else
-        local target_shell
-        target_shell=$(basename "${SHELL:-/bin/bash}")
-        COMP_NAMES+=("Shell Integration")
-        COMP_KEYS+=("SHELL")
-        COMP_STATUS+=("not configured")
-        COMP_ACTIONS+=("run")
-        COMP_DETAILS+=("Add to .${target_shell}rc (aienv, PATH, lazy loaders)")
-        COMP_SELECTED+=(1)
+        DESC[SHELL:run]="Add the machine_setting block to .$(basename "${SHELL:-/bin/bash}")rc (aienv, PATH, lazy loaders)"
+        DESC[SHELL:skip]="Do not touch shell rc files"
+        add SHELL "Shell integration" "not configured" run "run skip"
+    fi
+}
+
+check_base_tools() {
+    [ "${INSTALL_BASE_TOOLS:-true}" = true ] && [ "${IS_CLOUD:-false}" != true ] || return 0
+    local out
+    if out=$(bash "$SCRIPT_DIR/install-base-tools.sh" --check 2>/dev/null); then
+        DESC[BASE_TOOLS:skip]="Already installed"
+        add BASE_TOOLS "Base tools" "installed (${BASE_TOOLS:-btop})" skip "skip"
+    else
+        DESC[BASE_TOOLS:run]="Install ${BASE_TOOLS:-btop} (sudo)"
+        DESC[BASE_TOOLS:skip]="Do not install"
+        add BASE_TOOLS "Base tools" "$(echo "$out" | sed 's/.*missing: //; s/ —.*//') missing" run "run skip"
+    fi
+}
+
+check_locales() {
+    [ "${INSTALL_LOCALES:-true}" = true ] && [ "$(uname -s)" = "Linux" ] && [ "${IS_CLOUD:-false}" != true ] || return 0
+    if bash "$SCRIPT_DIR/install-locale.sh" --check &>/dev/null; then
+        DESC[LOCALES:skip]="Already generated"
+        add LOCALES "Locales" "${LOCALE_REMOTE:-ko_KR.UTF-8} / ${LOCALE_CONSOLE:-en_US.UTF-8}" skip "skip"
+    else
+        DESC[LOCALES:run]="Generate ${LOCALE_REMOTE:-ko_KR.UTF-8} and ${LOCALE_CONSOLE:-en_US.UTF-8} (sudo)"
+        DESC[LOCALES:skip]="Do not generate locales"
+        add LOCALES "Locales" "not generated" run "run skip"
+    fi
+}
+
+# ---- Server extras (Linux hosts only). Proposed when the profile asks for them or with --server. ----
+check_server() {
+    [ "$(uname -s)" = "Linux" ] && [ "${IS_CLOUD:-false}" != true ] && command -v apt-get &>/dev/null || return 0
+    local want="${WANT_SERVER:-${INSTALL_SERVER:-false}}"
+    local new; new=$( [ "$want" = true ] && echo run || echo skip )
+    on() { [ "$want" = true ] && [ "${1:-true}" = true ]; }
+
+    # Docker
+    ex_docker || true
+    if [ -z "$EX_DOCKER_VER" ]; then
+        DESC[DOCKER:run]="Install Docker Engine + Compose from Docker's repo${_NV_TOOLKIT_NOTE}"
+        DESC[DOCKER:skip]="Do not install Docker (the monitoring stack needs it)"
+        add DOCKER "Docker" "not installed" "$(on "${SERVER_DOCKER:-true}" && echo run || echo skip)" "run skip" server
+    else
+        EXISTS[DOCKER]=1
+        DESC[DOCKER:skip]="Keep Docker $EX_DOCKER_VER ($EX_DOCKER_SRC)"
+        if [ "$EX_DOCKER_SRC" = "docker-ce" ]; then
+            DESC[DOCKER:update]="Upgrade Docker Engine + Compose packages; re-check GPU container support"
+            add DOCKER "Docker" "$EX_DOCKER_VER (docker-ce)" "$( [ "$want" = true ] && by_policy "update skip" || echo skip )" "update skip" server
+        else
+            DESC[DOCKER:replace]="Remove the $EX_DOCKER_SRC Docker and install Docker Engine from Docker's repo (existing containers/images are not migrated)"
+            DESC[DOCKER:update]="Keep the $EX_DOCKER_SRC Docker, only add GPU container support / docker group"
+            local d=skip; [ "$want" = true ] && { d=update; [ "$POLICY" = replace ] && d=replace; [ "$POLICY" = keep ] && d=skip; }
+            add DOCKER "Docker" "$EX_DOCKER_VER ($EX_DOCKER_SRC, not docker-ce)" "$d" "update replace skip" server
+        fi
+    fi
+
+    # Monitoring
+    local bind; bind=$(grep -s '^MONITORING_BIND=' "$REPO_DIR/monitoring/.env" | cut -d= -f2 || true); bind="${bind:-127.0.0.1}"
+    [ "$bind" = "0.0.0.0" ] && bind="127.0.0.1"
+    local p3000 p9090
+    p3000=$(ex_port_in_use 3000 || true); p9090=$(ex_port_in_use 9090 || true)
+    if [ -f "$REPO_DIR/monitoring/.env" ] && curl -fs -m 2 "http://$bind:9090/-/healthy" >/dev/null 2>&1; then
+        EXISTS[MONITORING]=1
+        DESC[MONITORING:update]="Re-deploy the stack (pulls the image versions pinned in monitoring/docker-compose.yml; data is kept)"
+        DESC[MONITORING:skip]="Keep the running stack"
+        add MONITORING "Monitoring stack" "running (Prometheus + Grafana)" "$( [ "$want" = true ] && by_policy "update skip" || echo skip )" "update skip" server
+    elif [ -n "$p3000$p9090" ]; then
+        EXISTS[MONITORING]=1
+        DESC[MONITORING:skip]="Leave it: port ${p3000:+3000 }${p9090:+9090 }is used by something that is not this stack"
+        DESC[MONITORING:run]="Deploy anyway (will fail to bind unless that service is stopped first)"
+        add MONITORING "Monitoring stack" "port ${p3000:+3000 }${p9090:+9090 }already in use" skip "run skip" server
+    else
+        DESC[MONITORING:run]="Deploy Prometheus + Grafana + node-exporter${_DCGM_NOTE} with Docker Compose"
+        DESC[MONITORING:skip]="Do not deploy monitoring"
+        add MONITORING "Monitoring stack" "not running" "$(on "${SERVER_MONITORING:-true}" && echo run || echo skip)" "run skip" server
+    fi
+
+    # Update policy
+    if [ -f /etc/apt/apt.conf.d/52machine-setting-unattended ]; then
+        EXISTS[UPDATE_POLICY]=1
+        DESC[UPDATE_POLICY:update]="Rewrite the policy file from the current config"
+        DESC[UPDATE_POLICY:skip]="Keep the current policy file"
+        add UPDATE_POLICY "Update policy" "configured" "$( [ "$want" = true ] && by_policy "update skip" || echo skip )" "update skip" server
+    else
+        DESC[UPDATE_POLICY:run]="No automatic reboot; hold kernel + NVIDIA packages out of unattended upgrades"
+        DESC[UPDATE_POLICY:skip]="Leave Ubuntu's default automatic updates"
+        add UPDATE_POLICY "Update policy" "Ubuntu default" "$(on "${SERVER_UPDATE_POLICY:-true}" && echo run || echo skip)" "run skip" server
+    fi
+
+    # Disk health
+    if command -v smartctl &>/dev/null && { systemctl is-active --quiet smartmontools 2>/dev/null || systemctl is-active --quiet smartd 2>/dev/null; }; then
+        DESC[DISK_HEALTH:skip]="smartd already running"
+        add DISK_HEALTH "Disk health (smartd)" "active" skip "skip" server
+    else
+        DESC[DISK_HEALTH:run]="Install smartmontools and enable smartd"
+        DESC[DISK_HEALTH:skip]="No SMART monitoring"
+        add DISK_HEALTH "Disk health (smartd)" "not active" "$(on "${SERVER_DISK_HEALTH:-true}" && echo run || echo skip)" "run skip" server
+    fi
+
+    # Sleep
+    if [ "$(systemctl is-enabled suspend.target 2>/dev/null || true)" = "masked" ]; then
+        DESC[SLEEP:skip]="Sleep targets already masked"
+        add SLEEP "No-sleep" "masked" skip "skip" server
+    else
+        DESC[SLEEP:run]="Mask sleep / suspend / hibernate targets"
+        DESC[SLEEP:skip]="Leave power management as it is"
+        add SLEEP "No-sleep" "sleep allowed" "$(on "${SERVER_DISABLE_SLEEP:-true}" && echo run || echo skip)" "run skip" server
+    fi
+
+    # GPU persistence
+    if [ "$_GPU_BACKEND" = "cuda" ]; then
+        if grep -qs 'pcie_aspm=off' /etc/default/grub && grep -qs 'NVreg_DynamicPowerManagement' /etc/default/grub; then
+            EXISTS[GPU_PERSIST]=1
+            DESC[GPU_PERSIST:update]="Re-run gpu-persist-fix.sh (only changes what drifted)"
+            DESC[GPU_PERSIST:skip]="Keep the current GPU stability settings"
+            add GPU_PERSIST "GPU stability" "applied" "$( [ "$want" = true ] && by_policy "update skip" || echo skip )" "update skip" server
+        else
+            DESC[GPU_PERSIST:run]="Kernel parameters (GRUB), modprobe, udev and watchdog for GPU stability (reboot needed; existing GRUB options are kept)"
+            DESC[GPU_PERSIST:skip]="Do not change kernel parameters"
+            add GPU_PERSIST "GPU stability" "not applied" "$(on "${SERVER_GPU_PERSIST:-true}" && echo run || echo skip)" "run skip" server
+        fi
     fi
 }
 
 # ============================================================
 # Display
 # ============================================================
+label() {
+    case "$1" in
+        run) echo "INSTALL" ;; update) echo "UPDATE" ;; replace) echo "REPLACE" ;; skip) echo "keep/skip" ;;
+    esac
+}
+color() {
+    case "$1" in
+        run) printf '\033[33m' ;; update) printf '\033[36m' ;; replace) printf '\033[31m' ;; *) printf '\033[32m' ;;
+    esac
+}
 
 display_plan() {
     echo ""
@@ -517,158 +616,81 @@ display_plan() {
     echo ""
     echo "  System:  $_SYS_LINE"
     echo "  GPU:     $_GPU_LINE"
-    echo "  Profile: $_PROFILE"
+    echo "  Profile: $_PROFILE      Existing installs: $POLICY (--existing keep|update|replace)"
     echo ""
-
-    # Table header
-    printf "  %-3s %-20s %-30s %s\n" "#" "Component" "Current Status" "Proposed Action"
-    printf "  %s\n" "─────────────────────────────────────────────────────────────────────────────"
-
-    local i
-    for i in "${!COMP_NAMES[@]}"; do
-        local num=$((i + 1))
-        local marker=" "
-        local action_label=""
-        local color_start="" color_end=""
-
-        case "${COMP_ACTIONS[$i]}" in
-            run)
-                action_label="→ INSTALL"
-                color_start="\033[33m"    # yellow
-                color_end="\033[0m"
-                ;;
-            update)
-                action_label="→ UPDATE"
-                color_start="\033[36m"    # cyan
-                color_end="\033[0m"
-                ;;
-            skip)
-                action_label="  (ok)"
-                color_start="\033[32m"    # green
-                color_end="\033[0m"
-                ;;
-        esac
-
-        if [ "${COMP_SELECTED[$i]}" -eq 1 ]; then
-            marker="*"
+    printf "  %-3s %-22s %-46s %s\n" "#" "Component" "Found on this machine" "Action"
+    printf "  %s\n" "──────────────────────────────────────────────────────────────────────────────────────────"
+    local i last_group=""
+    for i in "${!COMP_KEYS[@]}"; do
+        if [ "${COMP_GROUP[$i]}" != "$last_group" ] && [ "${COMP_GROUP[$i]}" = "server" ]; then
+            printf "  %s\n" "── server extras ──"
         fi
-
-        printf "  ${color_start}%s %-2d %-20s %-30s %s${color_end}\n" \
-            "$marker" "$num" "${COMP_NAMES[$i]}" "${COMP_STATUS[$i]}" "$action_label"
-        # Detail on second line if action is not skip
-        if [ "${COMP_ACTIONS[$i]}" != "skip" ]; then
-            printf "  ${color_start}     %-20s %s${color_end}\n" "" "${COMP_DETAILS[$i]}"
-        fi
+        last_group="${COMP_GROUP[$i]}"
+        local a="${COMP_ACTIONS[$i]}" k="${COMP_KEYS[$i]}"
+        printf "  $(color "$a")%-3d %-22s %-46s %s\033[0m\n" "$((i + 1))" "${COMP_NAMES[$i]}" "${COMP_STATUS[$i]:0:46}" "$(label "$a")"
+        [ "$a" != "skip" ] && printf "  $(color "$a")    → %s\033[0m\n" "${DESC[$k:$a]:-}"
     done
-
-    # Summary
-    local selected_count=0
-    local action_items=()
-    for i in "${!COMP_SELECTED[@]}"; do
-        if [ "${COMP_SELECTED[$i]}" -eq 1 ]; then
-            selected_count=$((selected_count + 1))
-            action_items+=("[$((i + 1))] ${COMP_NAMES[$i]}")
-        fi
-    done
-
     echo ""
-    if [ "$selected_count" -eq 0 ]; then
-        echo "  Everything is up to date. No actions needed."
+    local n=0 r=0
+    for i in "${!COMP_ACTIONS[@]}"; do
+        [ "${COMP_ACTIONS[$i]}" != "skip" ] && n=$((n + 1))
+        [ "${COMP_ACTIONS[$i]}" = "replace" ] && r=$((r + 1))
+    done
+    if [ "$n" -eq 0 ]; then
+        echo "  Nothing to do: everything requested is already in place."
     else
-        echo "  Proposed actions ($selected_count):"
-        for item in "${action_items[@]}"; do
-            echo "    $item"
-        done
+        local rnote=""; [ "$r" -gt 0 ] && rnote=", $r of them REPLACE something that exists"
+        echo "  $n action(s) planned${rnote}."
     fi
     echo ""
 }
 
 # ============================================================
-# Interactive Customization
+# Interactive customization: pick the action per component
 # ============================================================
+choose_action() {   # $1 = index
+    local i="$1" k="${COMP_KEYS[$1]}" opts=(${COMP_OPTIONS[$1]}) n=1 o
+    if [ ${#opts[@]} -le 1 ]; then
+        echo "  ${COMP_NAMES[$i]}: nothing to choose (${DESC[$k:${opts[0]}]:-${opts[0]}})"
+        return
+    fi
+    echo ""
+    echo "  ${COMP_NAMES[$i]} — found: ${COMP_STATUS[$i]}"
+    for o in "${opts[@]}"; do
+        printf "    %d) %-9s %s%s\n" "$n" "$(label "$o")" "${DESC[$k:$o]:-}" "$( [ "$o" = "${COMP_ACTIONS[$i]}" ] && echo "   [current]" )"
+        n=$((n + 1))
+    done
+    local pick
+    read -rp "  Choice [keep current]: " pick
+    if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le ${#opts[@]} ]; then
+        COMP_ACTIONS[$i]="${opts[$((pick - 1))]}"
+    fi
+}
 
 customize_loop() {
     while true; do
-        local selected_count=0
-        for i in "${!COMP_SELECTED[@]}"; do
-            [ "${COMP_SELECTED[$i]}" -eq 1 ] && selected_count=$((selected_count + 1))
-        done
-
-        if [ "$selected_count" -eq 0 ]; then
-            echo "  No actions selected."
-            read -rp "  (q)uit / (t)oggle items: " choice
-        else
-            read -rp "  (Y)es, proceed / (t)oggle items / (a)ll / (n)one / (q)uit: " choice
-        fi
-
+        local choice
+        read -rp "  (Y)es, proceed / <number> change an item / (k)eep all existing / (u)pdate all existing / (n)othing / (q)uit: " choice
         case "${choice:-Y}" in
-            [Yy]|[Yy]es)
-                if [ "$selected_count" -eq 0 ]; then
-                    echo "  Nothing to do."
-                    return 1
-                fi
-                return 0
-                ;;
-            [Tt]|toggle)
-                echo ""
-                echo "  Current selection (* = selected):"
-                for i in "${!COMP_NAMES[@]}"; do
-                    local sel=" "
-                    [ "${COMP_SELECTED[$i]}" -eq 1 ] && sel="*"
-                    local action_tag=""
-                    case "${COMP_ACTIONS[$i]}" in
-                        run)    action_tag="INSTALL" ;;
-                        update) action_tag="UPDATE" ;;
-                        skip)   action_tag="ok" ;;
-                    esac
-                    printf "    %s %d) %-20s [%s]\n" "$sel" "$((i + 1))" "${COMP_NAMES[$i]}" "$action_tag"
+            [Yy]|[Yy]es) return 0 ;;
+            [Qq]|quit)   return 1 ;;
+            [Nn])        for i in "${!COMP_ACTIONS[@]}"; do COMP_ACTIONS[$i]=skip; done; display_plan ;;
+            [Kk]|[Uu])
+                local newpol=keep; [[ "$choice" =~ ^[Uu]$ ]] && newpol=update
+                for i in "${!COMP_KEYS[@]}"; do
+                    [ -n "${EXISTS[${COMP_KEYS[$i]}]:-}" ] || continue
+                    if [ "$newpol" = update ] && [[ " ${COMP_OPTIONS[$i]} " == *" update "* ]]; then COMP_ACTIONS[$i]=update
+                    else COMP_ACTIONS[$i]=skip; fi
                 done
-                echo ""
-                read -rp "  Enter numbers to toggle (e.g., 1,3,5): " toggle_input
-
-                IFS=',' read -ra nums <<< "$toggle_input"
-                for num_str in "${nums[@]}"; do
-                    num_str=$(echo "$num_str" | tr -d ' ')
-                    if [[ "$num_str" =~ ^[0-9]+$ ]]; then
-                        local idx=$((num_str - 1))
-                        if [ "$idx" -ge 0 ] && [ "$idx" -lt "${#COMP_SELECTED[@]}" ]; then
-                            if [ "${COMP_SELECTED[$idx]}" -eq 1 ]; then
-                                COMP_SELECTED[$idx]=0
-                            else
-                                COMP_SELECTED[$idx]=1
-                            fi
-                        fi
-                    fi
-                done
-                echo ""
-                # Re-display summary
-                echo "  Updated selection:"
-                for i in "${!COMP_NAMES[@]}"; do
-                    if [ "${COMP_SELECTED[$i]}" -eq 1 ]; then
-                        echo "    [*] $((i + 1)) ${COMP_NAMES[$i]}: ${COMP_DETAILS[$i]}"
-                    fi
-                done
-                echo ""
-                ;;
-            [Aa]|all)
-                for i in "${!COMP_SELECTED[@]}"; do
-                    COMP_SELECTED[$i]=1
-                done
-                echo "  All items selected."
-                echo ""
-                ;;
-            [Nn]|none)
-                for i in "${!COMP_SELECTED[@]}"; do
-                    COMP_SELECTED[$i]=0
-                done
-                echo "  All items deselected."
-                echo ""
-                ;;
-            [Qq]|quit)
-                return 1
-                ;;
+                display_plan ;;
             *)
-                echo "  Invalid choice."
+                local ok=false num
+                for num in ${choice//,/ }; do
+                    if [[ "$num" =~ ^[0-9]+$ ]] && [ "$num" -ge 1 ] && [ "$num" -le ${#COMP_KEYS[@]} ]; then
+                        choose_action "$((num - 1))"; ok=true
+                    fi
+                done
+                [ "$ok" = true ] && display_plan || echo "  Enter Y, q, or an item number."
                 ;;
         esac
     done
@@ -677,90 +699,59 @@ customize_loop() {
 # ============================================================
 # Write Plan File
 # ============================================================
-
 write_plan() {
     mkdir -p "$(dirname "$PLAN_FILE")"
-    cat > "$PLAN_FILE" << PLANEOF
-# Auto-generated by preflight.sh on $(date -Iseconds)
-# Consumed by setup.sh — do not edit manually
-PREFLIGHT_RAN=true
-PREFLIGHT_PROFILE=$_PROFILE
-PREFLIGHT_GPU_BACKEND=$_GPU_BACKEND
-PREFLIGHT_CUDA_SUFFIX=$_CUDA_SUFFIX
-PLANEOF
-
-    # Write per-component actions
-    for i in "${!COMP_KEYS[@]}"; do
-        local action="skip"
-        [ "${COMP_SELECTED[$i]}" -eq 1 ] && action="${COMP_ACTIONS[$i]}"
-        echo "PLAN_${COMP_KEYS[$i]}=$action" >> "$PLAN_FILE"
-    done
-
-    echo "" >> "$PLAN_FILE"
-    echo "# Component details" >> "$PLAN_FILE"
-    for i in "${!COMP_KEYS[@]}"; do
-        echo "PLAN_${COMP_KEYS[$i]}_DETAIL=\"${COMP_DETAILS[$i]}\"" >> "$PLAN_FILE"
-    done
+    {
+        echo "# Auto-generated by preflight.sh on $(date -Iseconds)"
+        echo "# Consumed by setup.sh — do not edit manually"
+        echo "PREFLIGHT_RAN=true"
+        echo "PREFLIGHT_PROFILE=$_PROFILE"
+        echo "PREFLIGHT_GPU_BACKEND=$_GPU_BACKEND"
+        echo "PREFLIGHT_CUDA_SUFFIX=$_CUDA_SUFFIX"
+        echo "PREFLIGHT_EXISTING_POLICY=$POLICY"
+        local i nv=skip
+        for i in "${!COMP_KEYS[@]}"; do
+            echo "PLAN_${COMP_KEYS[$i]}=${COMP_ACTIONS[$i]}"
+            [[ "${COMP_KEYS[$i]}" == NVIDIA_* ]] && [ "${COMP_ACTIONS[$i]}" != skip ] && nv=run
+        done
+        echo "PLAN_NVIDIA=$nv"      # stage-level switch: run when any NVIDIA part has work to do
+    } > "$PLAN_FILE"
 }
 
 # ============================================================
 # Main
 # ============================================================
-
-# 1. Detect system info
 detect_system
+_NV_TOOLKIT_NOTE=""; _DCGM_NOTE=""
+[ "$_GPU_BACKEND" = "cuda" ] && { _NV_TOOLKIT_NOTE=" + NVIDIA Container Toolkit"; _DCGM_NOTE=" + GPU metrics (DCGM)"; }
 
-# 2. Check each component
 check_hardware_profile
+check_base_tools
+check_locales
 check_nvidia
 check_python
 check_venv_and_packages
+check_vllm
 check_node
 check_java
 check_shell
+check_server
 
-# 3. Display plan
 display_plan
 
-# 4. Handle modes
 case "$MODE" in
-    check-only)
-        exit 0
-        ;;
+    check-only) exit 0 ;;
     quiet)
         write_plan
         echo "  Plan written to: $PLAN_FILE"
-        exit 0
-        ;;
+        exit 0 ;;
     interactive)
-        # Count items needing action
-        need_action=0
-        for i in "${!COMP_SELECTED[@]}"; do
-            [ "${COMP_SELECTED[$i]}" -eq 1 ] && need_action=$((need_action + 1))
-        done
-
-        if [ "$need_action" -eq 0 ]; then
-            echo "  Nothing to do. System is fully configured."
-            read -rp "  Force re-check? (t)oggle items / (q)uit [q]: " force_choice
-            case "${force_choice:-q}" in
-                [Tt]|toggle)
-                    if customize_loop; then
-                        write_plan
-                        echo "  Plan saved. Run './setup.sh --preflight' to execute."
-                    fi
-                    ;;
-                *) exit 0 ;;
-            esac
-        else
-            if customize_loop; then
-                write_plan
-                echo "  Plan saved."
-                exit 0
-            else
-                echo "  Cancelled."
-                rm -f "$PLAN_FILE"
-                exit 1
-            fi
+        if customize_loop; then
+            write_plan
+            echo "  Plan saved."
+            exit 0
         fi
-        ;;
+        echo "  Cancelled."
+        rm -f "$PLAN_FILE"
+        exit 1 ;;
 esac
