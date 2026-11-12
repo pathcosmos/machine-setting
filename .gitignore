@@ -49,3 +49,6 @@ logs/
 .claude/**
 !.claude/
 !.claude/settings.json
+
+# === Benchmark outputs ===
+bench/results/
