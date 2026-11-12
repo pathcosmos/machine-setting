@@ -123,6 +123,8 @@ Optimal profile is auto-selected based on detection results:
 
 - **Base tools**: `btop` is installed on every machine, GPU or not (right after hardware detection, sudo). List: `BASE_TOOLS`; disable with `INSTALL_BASE_TOOLS=false`. Standalone: `make base-tools`.
 
+- **Locales**: the shell language follows how you connect. SSH, terminal emulators and tmux get `ko_KR.UTF-8` (Korean messages); a direct tty on the machine gets `en_US.UTF-8` (the Linux console cannot draw Hangul). Setup installs both locales and the Korean language pack (`make locale`); `shell/bashrc.d/20-env.sh` does the switching. Values: `LOCALE_REMOTE` / `LOCALE_CONSOLE`; disable with `INSTALL_LOCALES=false`. The system default locale is untouched, so service logs stay as they are. On a machine without the locale, the shell falls back to English or `C.UTF-8`.
+
 ### [2/7] NVIDIA GPU Stack (Linux only)
 
 Automatically installs the system-level NVIDIA GPU software stack. `scripts/install-nvidia.sh` runs 9 sub-stages.

@@ -828,6 +828,17 @@ check_base_tools() {
     fi
 }
 
+check_locales() {
+    [ "${INSTALL_LOCALES:-true}" = true ] || return 0
+    [ "$(uname -s)" = "Linux" ] && [ "${IS_CLOUD:-false}" != "true" ] || return 0
+    local out
+    if out=$(bash "$SCRIPT_DIR/install-locale.sh" --check 2>/dev/null); then
+        status_ok "Locales (remote ${LOCALE_REMOTE:-ko_KR.UTF-8}, console ${LOCALE_CONSOLE:-en_US.UTF-8})"
+    else
+        status_warn "$(echo "$out" | head -1 | sed 's/^ *\[WARN\] *//')"
+    fi
+}
+
 check_vllm() {
     local vpath="${VLLM_VENV_PATH:-$HOME/vllm-env}"
     # Only reported when installed or requested via config
@@ -1064,6 +1075,7 @@ check_server_extras
 check_uv
 check_vllm
 check_base_tools
+check_locales
 check_python
 check_venv
 check_key_packages

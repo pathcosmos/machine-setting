@@ -123,6 +123,8 @@ STAGE_7_SHELL=pending
 
 - **기본 도구**: `btop`은 GPU 유무와 관계없이 모든 기기에 설치됩니다(하드웨어 감지 직후, sudo). 목록은 `BASE_TOOLS`, 끄려면 `INSTALL_BASE_TOOLS=false`. 단독 실행: `make base-tools`.
 
+- **로캘**: 접속 방식에 따라 셸 언어가 달라집니다. SSH·터미널 에뮬레이터·tmux에서는 `ko_KR.UTF-8`(한글 메시지), 기기에 직접 붙은 tty 콘솔에서는 `en_US.UTF-8`(리눅스 콘솔은 한글을 그리지 못함). setup이 두 로캘과 한국어 언어 팩을 설치하고(`make locale`), 전환은 `shell/bashrc.d/20-env.sh`가 합니다. 값은 `LOCALE_REMOTE` / `LOCALE_CONSOLE`, 끄려면 `INSTALL_LOCALES=false`. 시스템 기본 로캘은 바꾸지 않으므로 서비스 로그는 그대로입니다. 로캘이 설치되지 않은 기기에서는 자동으로 영어나 `C.UTF-8`을 씁니다.
+
 ### [2/7] NVIDIA GPU Stack (Linux 전용)
 
 시스템 레벨 NVIDIA GPU 소프트웨어 스택을 자동으로 설치합니다. `scripts/install-nvidia.sh`가 9개 서브 스테이지를 실행합니다.

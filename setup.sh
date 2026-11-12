@@ -265,6 +265,15 @@ if [ "${INSTALL_BASE_TOOLS:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true 
 fi
 
 # ============================================================
+# Locales (Korean over SSH, English on the console) — idempotent, not checkpointed
+# ============================================================
+if [ "${INSTALL_LOCALES:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ]; then
+    echo "[+] Locales (remote: ${LOCALE_REMOTE:-ko_KR.UTF-8}, console: ${LOCALE_CONSOLE:-en_US.UTF-8})"
+    bash "$SCRIPT_DIR/scripts/install-locale.sh" || echo "  Locales not fully set up — re-run: ./scripts/install-locale.sh"
+    echo ""
+fi
+
+# ============================================================
 # [2/7] NVIDIA GPU Stack (driver, CUDA, cuDNN, NCCL)
 # ============================================================
 if checkpoint_is_done 2 NVIDIA; then
