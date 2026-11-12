@@ -1,0 +1,25 @@
+{
+  "NVIDIA GeForce RTX 5090": {
+    "metrics": {
+      "d2h_gib_s": 11.53,
+      "dataloader_resnet18_img_s": 8184.93,
+      "h2d_gib_s": 47.71,
+      "matmul_fp16_tflops": 224.64,
+      "matmul_fp32_tflops": 66.99,
+      "resnet50_infer_img_s": 7963.04,
+      "resnet50_train_img_s": 2767.91,
+      "transformer_train_tok_s": 162974.89
+    },
+    "sizes": {
+      "amp": "bf16",
+      "loader_batch": 256,
+      "matmul_fp16_n": 16384,
+      "matmul_fp32_n": 8192,
+      "resnet_infer_batch": 256,
+      "resnet_train_batch": 128,
+      "transformer_batch": 32,
+      "vram_gib": 31.4
+    },
+    "source": "measured by gpu-burnin on 2026-11-11 (6.0 h, driver 595.99.02, torch 2.15.0+cu132)"
+  }
+}

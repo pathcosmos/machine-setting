@@ -499,7 +499,7 @@ run_dry_run_diagnostic() {
 
     # --- System Tools ---
     printf "  %-22s" "System Tools:"
-    local sys_tools_list=("build-essential" "cmake" "ninja-build" "numactl" "hwloc" "nvtop" "lm-sensors" "fio")
+    local sys_tools_list=("build-essential" "cmake" "ninja-build" "numactl" "hwloc" "nvtop" "btop" "lm-sensors" "fio")
     local sys_installed=() sys_missing=()
     for pkg in "${sys_tools_list[@]}"; do
         if dpkg -l "$pkg" 2>/dev/null | grep -q '^ii'; then
@@ -1407,7 +1407,7 @@ install_system_tools() {
     local build_pkgs="build-essential cmake ninja-build pkg-config"
 
     # GPU monitoring and system utilities
-    local monitoring_pkgs="nvtop lm-sensors"
+    local monitoring_pkgs="nvtop btop lm-sensors"
 
     # NUMA and topology tools (important for multi-GPU)
     local numa_pkgs="numactl hwloc"
@@ -1560,7 +1560,7 @@ apply_kernel_tuning
 if [ "$OPT_EXTRAS_ONLY" = true ]; then
     echo ""
     echo "  === GPU Extras Summary ==="
-    echo "  System tools: ninja-build, hwloc, nvtop, lm-sensors, fio, etc."
+    echo "  System tools: ninja-build, hwloc, nvtop, btop, lm-sensors, fio, etc."
     echo "  Kernel tuning: sysctl + limits applied"
     echo ""
     exit 0

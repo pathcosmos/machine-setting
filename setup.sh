@@ -76,6 +76,8 @@ while [[ $# -gt 0 ]]; do
         --gpu-persist-fix) shift; exec sudo bash "$SCRIPT_DIR/scripts/gpu-persist-fix.sh" "$@" ;;
         --server)       shift; exec bash "$SCRIPT_DIR/scripts/install-server.sh" "$@" ;;
         --info)         shift; exec bash "$SCRIPT_DIR/scripts/system-info.sh" "$@" ;;
+        --test)         shift; exec bash "$SCRIPT_DIR/scripts/smoke-test.sh" "$@" ;;
+        --burnin)       shift; exec bash "$SCRIPT_DIR/scripts/gpu-burnin.sh" "$@" ;;
         --recover)      exec bash "$SCRIPT_DIR/scripts/doctor.sh" --recover ;;
         --uninstall)    shift; exec bash "$SCRIPT_DIR/scripts/uninstall.sh" "$@" ;;
         --help|-h)
@@ -104,6 +106,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --reset           Reset state and start from scratch"
             echo "  --from <N>        Start from stage N (1-7), mark earlier stages as done"
             echo "  --info            Print detailed machine spec report (Markdown; -o <file>, --packages)"
+            echo "  --test            Functional smoke test of everything installed (--full adds vLLM serving)"
+            echo "  --burnin          GPU stability + performance test, 6 hours by default (--detach, --quick, --status)"
             echo "  --doctor          Run health check"
             echo "  --gpu-doctor      GPU-specific health diagnostics"
             echo "  --gpu-persist-fix Permanent GPU stability fixes (sudo)"
@@ -249,6 +253,15 @@ if [ "${CLOUD_MODE:-false}" = true ]; then
     INSTALL_NVIDIA=false
     NVIDIA_SYSTEM_TOOLS=false
     NVIDIA_KERNEL_TUNING=false
+fi
+
+# ============================================================
+# Base tools (btop etc.) — every machine; idempotent, so not checkpointed
+# ============================================================
+if [ "${INSTALL_BASE_TOOLS:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "${PREFLIGHT_ONLY:-false}" != true ]; then
+    echo "[+] Base tools (${BASE_TOOLS:-btop})"
+    bash "$SCRIPT_DIR/scripts/install-base-tools.sh" || echo "  Base tools not installed — re-run: ./scripts/install-base-tools.sh"
+    echo ""
 fi
 
 # ============================================================

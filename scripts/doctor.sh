@@ -817,6 +817,17 @@ check_server_extras() {
     fi
 }
 
+check_base_tools() {
+    [ "${INSTALL_BASE_TOOLS:-true}" = true ] || return 0
+    [ "${IS_CLOUD:-false}" = "true" ] && return 0
+    local out
+    if out=$(bash "$SCRIPT_DIR/install-base-tools.sh" --check 2>/dev/null); then
+        status_ok "Base tools (${BASE_TOOLS:-btop})"
+    else
+        status_warn "$(echo "$out" | sed 's/^ *\[WARN\] *//')"
+    fi
+}
+
 check_vllm() {
     local vpath="${VLLM_VENV_PATH:-$HOME/vllm-env}"
     # Only reported when installed or requested via config
@@ -1052,6 +1063,7 @@ check_disk_health
 check_server_extras
 check_uv
 check_vllm
+check_base_tools
 check_python
 check_venv
 check_key_packages

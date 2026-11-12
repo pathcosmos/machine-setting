@@ -421,9 +421,19 @@ apply_gpu_persist() {
 }
 
 # ============================================================
+# Base tools (always; GPU hosts also get these from install-nvidia.sh system tools)
+# ============================================================
+install_tools() {
+    [ "${INSTALL_BASE_TOOLS:-true}" = true ] || return 0
+    if [ "$DRY_RUN" = true ]; then bash "$SCRIPT_DIR/install-base-tools.sh" --dry-run; return 0; fi
+    bash "$SCRIPT_DIR/install-base-tools.sh"
+}
+
+# ============================================================
 # Main
 # ============================================================
 FAILED=()
+install_tools || FAILED+=("tools")
 [ "$DO_SLEEP" = true ]       && { disable_sleep         || FAILED+=("sleep"); }
 [ "$DO_UPDATES" = true ]     && { configure_updates     || FAILED+=("updates"); }
 [ "$DO_DISK" = true ]        && { configure_disk_health || FAILED+=("disk"); }

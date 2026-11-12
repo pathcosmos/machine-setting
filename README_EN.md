@@ -20,6 +20,7 @@ Portable AI development environment system. One command to set up Python + AI/ML
 - [Profiles](#profiles)
 - [GPU Support](#gpu-support)
 - [Server Extras](#server-extras)
+- [Testing & Burn-in](#testing--burn-in)
 - [Pre-flight Check](#pre-flight-check)
 - [Reinstallation](#reinstallation)
 - [Uninstall](#uninstall)
@@ -120,6 +121,8 @@ Optimal profile is auto-selected based on detection results:
 - RAM >= 8GB -> `laptop`
 - Otherwise -> `minimal`
 
+- **Base tools**: `btop` is installed on every machine, GPU or not (right after hardware detection, sudo). List: `BASE_TOOLS`; disable with `INSTALL_BASE_TOOLS=false`. Standalone: `make base-tools`.
+
 ### [2/7] NVIDIA GPU Stack (Linux only)
 
 Automatically installs the system-level NVIDIA GPU software stack. `scripts/install-nvidia.sh` runs 9 sub-stages.
@@ -144,7 +147,7 @@ Automatically installs the system-level NVIDIA GPU software stack. `scripts/inst
 | NCCL | Multi-GPU collective communication (skipped for single GPU) | Auto |
 | Container Toolkit | Docker GPU support (skipped if Docker not installed) | `NVIDIA_CONTAINER_TOOLKIT` |
 | Enterprise Tools | DCGM, Fabric Manager, GDS, nvidia-peermem | `NVIDIA_ENTERPRISE` |
-| System Utilities | numactl, hwloc, nvtop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
+| System Utilities | numactl, hwloc, nvtop, btop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
 | Kernel Tuning | sysctl (vm.max_map_count, shmmax, etc.), memlock limits, CPU governor | `NVIDIA_KERNEL_TUNING` |
 
 **Open vs Proprietary Kernel Modules:**
@@ -365,7 +368,7 @@ Summary of items added to the system after installation:
 | `nvidia-container-toolkit` | Docker GPU support | `uninstall --component nvidia` |
 | `/etc/sysctl.d/99-machine-setting-gpu.conf` | GPU kernel parameters | `uninstall --component nvidia` |
 | `/etc/security/limits.d/99-machine-setting-gpu.conf` | memlock/nproc limits | `uninstall --component nvidia` |
-| numactl, hwloc, nvtop, lm-sensors | System utilities | Manual removal |
+| numactl, hwloc, nvtop, btop, lm-sensors | System utilities | Manual removal |
 
 ### Shell RC Modifications
 
@@ -797,6 +800,53 @@ Extras for an always-on server. Separate from the 7-stage base setup and safe to
 - **Reaching the dashboards**: ports bind to `127.0.0.1` by default. Remotely: `ssh -L 3000:localhost:3000 user@server`, then `http://localhost:3000` (admin / password in `monitoring/.env`).
 - **vLLM (optional)**: pins exact torch versions, so it is installed in its own venv (`~/vllm-env`), not the main env. `./setup.sh --vllm` (include) / `--no-vllm` (exclude), or `INSTALL_VLLM=true` in `config/machine.conf`. Standalone: `./scripts/install-vllm.sh`; activate with `vllmenv`; remove with `./scripts/install-vllm.sh --uninstall`.
 - **Fresh machine in one pass**: the driver loads after a reboot, so run `./setup.sh --server` once more afterwards to enable the GPU container test and GPU metrics.
+
+## Testing & Burn-in
+
+Unlike `doctor` (is it installed?), these actually run each feature. No sudo needed.
+
+### Functional test (`make test`)
+
+```bash
+make test                                  # 1-2 min: GPU compute, cuDNN, AMP training, ONNX Runtime, Docker + GPU container,
+                                           #          monitoring metrics, Node/Java/uv execution, vLLM import
+make test-full                             # + serve a tiny model with vLLM and get a completion (~300MB download)
+./scripts/smoke-test.sh --only gpu         # one group: health|gpu|docker|monitoring|runtimes|vllm
+```
+
+Components that are not installed are reported as SKIP; any failure gives exit code 1.
+
+### Long GPU burn-in (`make burnin`)
+
+Before a GPU server goes into service, run mixed workloads for 6 hours to check stability and performance.
+
+```bash
+make burnin                                # 6 hours in the background (survives logout)
+make burnin-status                         # progress
+make burnin-report                         # print the last report
+./scripts/gpu-burnin.sh --quick            # 10-minute check
+./scripts/gpu-burnin.sh --hours 12         # custom duration
+./scripts/gpu-burnin.sh --stop             # stop (a partial report is written)
+./scripts/gpu-burnin.sh --save-baseline    # on PASS, store the averages as the reference for this GPU model
+```
+
+| Workload in every round | What it checks |
+|------|------|
+| Matrix multiply FP32 / FP16 | Peak compute and power, TFLOPS |
+| ResNet-50 training and inference (AMP) | cuDNN convolutions, img/s |
+| Transformer training (12 layers / 768 wide, AMP) | Attention, tokens/s |
+| VRAM integrity | Writes a pattern to 90% of free VRAM, computes, reads it back |
+| Host <-> GPU transfer | PCIe copy speed |
+| DataLoader + training | CPU workers, RAM and GPU together |
+| Determinism | The same computation must give bit-identical results every round |
+| Idle | Thermal cycling between load and idle |
+
+- **Sized for the GPU model**: batch and matrix sizes follow the card's VRAM (e.g. ResNet-50 training batch 24GB -> 64, 32GB -> 128, 80GB -> 256); a batch is halved automatically on out-of-memory. The chosen sizes are recorded in the report.
+- **Continuous logging**: temperature, power, clocks, throttle reasons, fan and PCIe link state every 2 s in `samples.csv`. The run aborts 5 C below the shutdown threshold.
+- **Verdict**: FAIL — kernel Xid / GPU lost, corrupted VRAM values, non-identical results, workload error, temperature abort, throughput drop over 20%. WARN — thermal/hardware throttling, drop over 5%, unstable throughput, PCIe link change, below 85% of the reference.
+- **Per-model reference**: `config/gpu-baselines.json` stores average throughput per GPU model name. Models with a reference get a "vs reference" column; others are judged on stability and drift only.
+- **Results**: `~/.machine_setting/burnin/<timestamp>/gpu<N>/` (`REPORT.md`, `summary.json`, `samples.csv`, `run.log`). Multiple GPUs run in parallel, one report each.
+- Refuses to start while other processes use the GPU (`--force` overrides).
 
 ## Pre-flight Check
 

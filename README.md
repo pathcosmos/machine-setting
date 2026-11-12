@@ -20,6 +20,7 @@ Portable AI development environment system. One command to set up Python + AI/ML
 - [Profiles](#profiles)
 - [GPU Support](#gpu-support)
 - [Server Extras](#server-extras)
+- [Testing & Burn-in](#testing--burn-in)
 - [Pre-flight Check](#pre-flight-check)
 - [Reinstallation](#reinstallation)
 - [Uninstall](#uninstall)
@@ -120,6 +121,8 @@ STAGE_7_SHELL=pending
 - RAM ≥ 8GB → `laptop`
 - 그 외 → `minimal`
 
+- **기본 도구**: `btop`은 GPU 유무와 관계없이 모든 기기에 설치됩니다(하드웨어 감지 직후, sudo). 목록은 `BASE_TOOLS`, 끄려면 `INSTALL_BASE_TOOLS=false`. 단독 실행: `make base-tools`.
+
 ### [2/7] NVIDIA GPU Stack (Linux 전용)
 
 시스템 레벨 NVIDIA GPU 소프트웨어 스택을 자동으로 설치합니다. `scripts/install-nvidia.sh`가 9개 서브 스테이지를 실행합니다.
@@ -144,7 +147,7 @@ STAGE_7_SHELL=pending
 | NCCL | 멀티 GPU 집합 통신 (단일 GPU면 스킵) | 자동 |
 | Container Toolkit | Docker GPU 지원 (Docker 미설치 시 스킵) | `NVIDIA_CONTAINER_TOOLKIT` |
 | Enterprise Tools | DCGM, Fabric Manager, GDS, nvidia-peermem | `NVIDIA_ENTERPRISE` |
-| System Utilities | numactl, hwloc, nvtop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
+| System Utilities | numactl, hwloc, nvtop, btop, lm-sensors, build-essential, cmake | `NVIDIA_SYSTEM_TOOLS` |
 | Kernel Tuning | sysctl (vm.max_map_count, shmmax 등), memlock limits, CPU governor | `NVIDIA_KERNEL_TUNING` |
 
 **Open vs Proprietary Kernel Modules:**
@@ -365,7 +368,7 @@ done
 | `nvidia-container-toolkit` | Docker GPU 지원 | `uninstall --component nvidia` |
 | `/etc/sysctl.d/99-machine-setting-gpu.conf` | GPU 커널 파라미터 | `uninstall --component nvidia` |
 | `/etc/security/limits.d/99-machine-setting-gpu.conf` | memlock/nproc limits | `uninstall --component nvidia` |
-| numactl, hwloc, nvtop, lm-sensors | 시스템 유틸리티 | 수동 삭제 |
+| numactl, hwloc, nvtop, btop, lm-sensors | 시스템 유틸리티 | 수동 삭제 |
 
 ### Shell RC Modifications
 
@@ -805,6 +808,53 @@ sudo ./scripts/gpu-persist-fix.sh --revert
 - **모니터링 접속**: 기본은 `127.0.0.1`에만 바인딩됩니다. 원격에서는 `ssh -L 3000:localhost:3000 user@server` 후 `http://localhost:3000` (admin / `monitoring/.env`의 비밀번호).
 - **vLLM (선택)**: torch 버전을 정확히 고정하므로 메인 환경이 아닌 별도 venv(`~/vllm-env`)에 설치합니다. `./setup.sh --vllm`(포함) / `--no-vllm`(제외), 또는 `config/machine.conf`의 `INSTALL_VLLM=true`. 단독 설치는 `./scripts/install-vllm.sh`, 활성화는 `vllmenv`, 제거는 `./scripts/install-vllm.sh --uninstall`.
 - **새 기기에서 한 번에 돌릴 때**: 드라이버는 재부팅 후 로드되므로, 재부팅 뒤 `./setup.sh --server`를 한 번 더 실행해야 GPU 컨테이너 테스트와 GPU 지표가 켜집니다.
+
+## Testing & Burn-in
+
+설치 여부를 보는 `doctor`와 달리, 실제로 실행해서 확인하는 테스트입니다. sudo가 필요 없습니다.
+
+### 기능 테스트 (`make test`)
+
+```bash
+make test                                  # 1~2분: GPU 연산, cuDNN, AMP 학습, ONNX Runtime, Docker+GPU 컨테이너,
+                                           #        모니터링 지표 수집, Node/Java/uv 실행, vLLM import
+make test-full                             # + vLLM으로 작은 모델을 실제로 띄워 응답 확인 (약 300MB 다운로드)
+./scripts/smoke-test.sh --only gpu         # 한 그룹만: health|gpu|docker|monitoring|runtimes|vllm
+```
+
+설치하지 않은 항목은 SKIP으로 표시되고, 실패가 하나라도 있으면 종료 코드 1입니다.
+
+### GPU 장시간 부하 테스트 (`make burnin`)
+
+GPU가 있는 서버를 운용에 넣기 전에 6시간 동안 여러 종류의 작업을 반복해 안정성과 성능을 확인합니다.
+
+```bash
+make burnin                                # 6시간, 백그라운드 실행 (로그아웃해도 계속)
+make burnin-status                         # 진행 상황
+make burnin-report                         # 마지막 리포트 출력
+./scripts/gpu-burnin.sh --quick            # 10분 점검
+./scripts/gpu-burnin.sh --hours 12         # 시간 지정
+./scripts/gpu-burnin.sh --stop             # 중단 (그때까지의 리포트 작성)
+./scripts/gpu-burnin.sh --save-baseline    # PASS 시 이 GPU 모델의 기준값으로 저장
+```
+
+| 라운드마다 실행하는 작업 | 확인하는 것 |
+|------|------|
+| 행렬 곱 FP32 / FP16 | 최대 연산·전력 부하, TFLOPS |
+| ResNet-50 학습·추론 (AMP) | cuDNN 합성곱, img/s |
+| Transformer 학습 (12층/768차원, AMP) | 어텐션 연산, tokens/s |
+| VRAM 무결성 | 여유 VRAM의 90%에 패턴을 쓰고 연산 후 다시 읽어 비교 |
+| 호스트↔GPU 전송 | PCIe 전송 속도 |
+| DataLoader + 학습 | CPU 워커·RAM·GPU 동시 부하 |
+| 결정성 검사 | 같은 계산의 결과가 매 라운드 비트 단위로 같은지 |
+| 유휴 구간 | 부하↔유휴 온도 변화 반복 |
+
+- **GPU 모델에 맞춘 작업 크기**: 배치·행렬 크기를 해당 GPU의 VRAM 용량으로 정합니다(예: ResNet-50 학습 배치 24GB→64, 32GB→128, 80GB→256). 메모리가 부족하면 자동으로 절반으로 줄입니다. 선택된 크기는 리포트에 기록됩니다.
+- **상시 기록**: 온도, 전력, 클럭, 스로틀링 사유, 팬, PCIe 링크 상태를 2초마다 `samples.csv`에 남깁니다. 종료 임계 온도 5°C 전에 도달하면 자동 중단합니다.
+- **판정**: FAIL — 커널 Xid/GPU 유실, VRAM 값 손상, 결과 불일치, 작업 오류, 온도 중단, 성능 20% 이상 하락. WARN — 열·하드웨어 스로틀링, 성능 5% 이상 하락, 처리량 불안정, PCIe 링크 변화, 기준값의 85% 미만.
+- **모델별 기준값**: `config/gpu-baselines.json`에 GPU 모델 이름별 평균 처리량을 저장합니다. 기준값이 있는 모델은 리포트에 기준 대비 비율이 나오고, 없는 모델은 안정성과 시간에 따른 변화만 판정합니다.
+- **결과 위치**: `~/.machine_setting/burnin/<시각>/gpu<N>/` (`REPORT.md`, `summary.json`, `samples.csv`, `run.log`). GPU가 여러 개면 동시에 각각 실행합니다.
+- 다른 프로세스가 GPU를 쓰고 있으면 시작하지 않습니다(`--force`로 무시).
 
 ## Pre-flight Check
 
