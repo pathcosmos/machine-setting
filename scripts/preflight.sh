@@ -722,12 +722,28 @@ write_plan() {
 # Main
 # ============================================================
 detect_system
+check_timesync() {
+    [ "${INSTALL_TIMESYNC:-true}" = true ] && [ "$(uname -s)" = "Linux" ] && [ "${IS_CLOUD:-false}" != true ] || return 0
+    command -v timedatectl &>/dev/null || return 0
+    local out tz
+    tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+    if out=$(bash "$SCRIPT_DIR/install-timesync.sh" --check 2>/dev/null); then
+        DESC[TIMESYNC:skip]="Clock synchronized, timezone $tz"
+        add TIMESYNC "Time sync" "synchronized ($tz)" skip "skip"
+    else
+        out=$(bash "$SCRIPT_DIR/install-timesync.sh" --dry-run 2>/dev/null | sed 's/^ *\[DRY\] *would //' | paste -sd';' - | sed 's/;/; /g' || true)
+        DESC[TIMESYNC:run]="${out:-Turn on NTP sync} (sudo)"
+        DESC[TIMESYNC:skip]="Leave time settings as they are"
+        add TIMESYNC "Time sync" "${out:-not synchronized}" run "run skip"
+    fi
+}
 _NV_TOOLKIT_NOTE=""; _DCGM_NOTE=""
 [ "$_GPU_BACKEND" = "cuda" ] && { _NV_TOOLKIT_NOTE=" + NVIDIA Container Toolkit"; _DCGM_NOTE=" + GPU metrics (DCGM)"; }
 
 check_hardware_profile
 check_base_tools
 check_locales
+check_timesync
 check_nvidia
 check_python
 check_venv_and_packages

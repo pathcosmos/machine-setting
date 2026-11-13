@@ -20,3 +20,7 @@
 
 # Custom package groups
 # PACKAGE_GROUPS="core data"
+
+# Time: timezone to set (empty in default.conf = keep current) and extra NTP servers
+# TIMEZONE="Asia/Seoul"
+# NTP_EXTRA_SERVERS="time.cloudflare.com time.kriss.re.kr"

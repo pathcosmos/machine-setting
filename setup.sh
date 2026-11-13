@@ -319,6 +319,15 @@ if [ "${INSTALL_LOCALES:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] &
 fi
 
 # ============================================================
+# Time sync (NTP client on, extra sources, optional timezone) — idempotent, not checkpointed
+# ============================================================
+if [ "${INSTALL_TIMESYNC:-true}" = true ] && [ "${CLOUD_MODE:-false}" != true ] && [ "$(uname -s)" = "Linux" ] && ! plan_skips TIMESYNC; then
+    echo "[+] Time sync${TIMEZONE:+ (timezone: $TIMEZONE)}"
+    bash "$SCRIPT_DIR/scripts/install-timesync.sh" || echo "  Time sync not fully set up — re-run: ./scripts/install-timesync.sh"
+    echo ""
+fi
+
+# ============================================================
 # [2/7] NVIDIA GPU Stack (driver, CUDA, cuDNN, NCCL)
 # ============================================================
 if checkpoint_is_done 2 NVIDIA && ! plan_wants NVIDIA; then

@@ -124,6 +124,7 @@ Optimal profile is auto-selected based on detection results:
 - **Base tools**: `btop` is installed on every machine, GPU or not (right after hardware detection, sudo). List: `BASE_TOOLS`; disable with `INSTALL_BASE_TOOLS=false`. Standalone: `make base-tools`.
 
 - **Locales**: the shell language follows how you connect. SSH, terminal emulators and tmux get `ko_KR.UTF-8` (Korean messages); a direct tty on the machine gets `en_US.UTF-8` (the Linux console cannot draw Hangul). Setup installs both locales and the Korean language pack (`make locale`); `shell/bashrc.d/20-env.sh` does the switching. Values: `LOCALE_REMOTE` / `LOCALE_CONSOLE`; disable with `INSTALL_LOCALES=false`. The system default locale is untouched, so service logs stay as they are. On a machine without the locale, the shell falls back to English or `C.UTF-8`.
+- **Time sync**: setup makes sure an NTP client (chrony or systemd-timesyncd) is running and installs chrony if there is none (`make timesync`). `NTP_EXTRA_SERVERS` (default `time.cloudflare.com`) is added as an extra source for when the distro's servers are unreachable. The timezone changes only when `TIMEZONE` is set (e.g. `TIMEZONE="Asia/Seoul"`; empty keeps the current one). `make doctor` shows sync state and offset; disable with `INSTALL_TIMESYNC=false`.
 
 ### [2/7] NVIDIA GPU Stack (Linux only)
 
