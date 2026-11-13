@@ -839,6 +839,18 @@ check_locales() {
     fi
 }
 
+check_timesync() {
+    [ "${INSTALL_TIMESYNC:-true}" = true ] || return 0
+    [ "$(uname -s)" = "Linux" ] && [ "${IS_CLOUD:-false}" != "true" ] || return 0
+    command -v timedatectl &>/dev/null || return 0
+    local out
+    if out=$(bash "$SCRIPT_DIR/install-timesync.sh" --check 2>/dev/null); then
+        status_ok "$(echo "$out" | head -1 | sed 's/^ *\[OK\] *//')"
+    else
+        status_warn "$(echo "$out" | head -1 | sed 's/^ *\[WARN\] *//')"
+    fi
+}
+
 check_reboot_and_verify() {
     [ "$(uname -s)" = "Linux" ] || return 0
     local out rc
@@ -1090,6 +1102,7 @@ check_vllm
 check_reboot_and_verify
 check_base_tools
 check_locales
+check_timesync
 check_python
 check_venv
 check_key_packages
